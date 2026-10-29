@@ -82,8 +82,8 @@ jobs:
           fi
 
           # Handle both syntaxes: Kotlin (= "x") and Groovy ("x")
-          sed -i -E "s|applicationId([[:space:]]*=[[:space:]]*)[\"']com\\.racas\\.black[\"']|applicationId\\1\"$APP_ID\"|g" "$gradle_file"
-          sed -i -E "s|applicationId([[:space:]]+)[\"']com\\.racas\\.black[\"']|applicationId\\1\"$APP_ID\"|g" "$gradle_file"
+          sed -i -E "s|applicationId([[:space:]]*=[[:space:]]*)[\"']com\\.racas\\.mostwanted[\"']|applicationId\\1\"$APP_ID\"|g" "$gradle_file"
+          sed -i -E "s|applicationId([[:space:]]+)[\"']com\\.racas\\.mostwanted[\"']|applicationId\\1\"$APP_ID\"|g" "$gradle_file"
 
           if ! grep -q "applicationId.*[\"']$APP_ID[\"']" "$gradle_file"; then
             echo "::error::Failed to patch applicationId in $gradle_file"
