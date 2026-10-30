@@ -108,18 +108,20 @@ jobs:
         env:
           XBE_KEY: ${{ secrets.XBE_KEY }}
         run: |
-          if [ -z "$XBE_KEY" ]; then
-            echo "::error::The XBE_KEY secret is missing. The full build needs XBE_KEY and the four KEYSTORE_* secrets; add them in Settings -> Secrets and variables -> Actions. The UI Preview workflow needs no game key."
-            exit 1
-          fi
+          if [ -z "$XBE_KEY" ]; then echo "::error::The XBE_KEY secret is missing"; exit 1; fi
+          if [ ! -f ci/default.xbe.enc ]; then echo "::error::ci/default.xbe.enc is missing"; exit 1; fi
           mkdir -p assets
           # through a file: Git Bash rewrites an environment value that looks like a path (the key may start with /)
           # before a Windows program such as openssl sees it
           key="$RUNNER_TEMP/xbe.key"
-          printf '%s' "$XBE_KEY" > "$key"
-          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in ci/default.xbe.enc -out assets/default.xbe -pass "file:$key"
+          # no line ending: a key saved on Windows can carry a CR that the secret then keeps
+          printf '%s' "$XBE_KEY" | tr -d '\r\n' > "$key"
+          openssl enc -d -aes-256-cbc -md sha256 -pbkdf2 -iter 200000 -in ci/default.xbe.enc -out assets/default.xbe -pass "file:$key"
           rm -f "$key"
-          sha1sum assets/default.xbe
+          # the one supported image: anything else recompiles to a broken game
+          sha=$(sha1sum assets/default.xbe | cut -d' ' -f1)
+          echo "default.xbe SHA-1 $sha"
+          if [ "$sha" != "f636a16af04171089f879a4bed646e185c734233" ]; then echo "::error::default.xbe is not the supported image"; exit 1; fi
 
       - name: Release key
         if: startsWith(github.ref, 'refs/tags/v')
