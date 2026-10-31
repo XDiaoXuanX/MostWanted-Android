@@ -6,6 +6,8 @@
 #include <map>
 #include <string>
 
+struct X86Context;
+
 // the game's own settings, in the settings file through app::kGame.options
 namespace game {
 
@@ -31,7 +33,7 @@ struct Options {
     bool fog = true;    // the distance fog, native/vulkan.cpp draws without it when off
     // the cars' reflection, six more views: drawn every frame (0), every 2nd (1), every 4th (2) or off (3, a grey
     // cube read instead); src/game/game.cpp's ApplyGraphicsSwitches
-    uint32_t reflections = 0;
+    uint32_t reflections = 2;  // mobile default: update the six-face car reflection every fourth frame
     bool particles = true;    // tyre smoke, sparks and crash debris, the same
     bool shadows = true;      // the shadows under the cars, the same; the trees' and buildings', native/vulkan.cpp
     bool road_reflections = true;  // the wet road's reflection, the same
@@ -65,5 +67,7 @@ void WidenAspect();         // src/game/game.cpp: game thread, at each present
 void ApplyGraphicsSwitches();  // src/game/game.cpp: game thread, at each present
 void ApplyCheats();            // src/game/game.cpp: game thread, at each present
 bool Racing();    // src/game/game.cpp, any thread: the game flow is in a race (free roam too), not loading or the front end
+inline std::atomic<bool> g_reset_car{false};  // native/touch.cpp's RESET, taken by ResetCarFrame
+void ResetCarFrame(X86Context& ctx);          // src/game/game.cpp: game thread, at each present
 
 }  // namespace game

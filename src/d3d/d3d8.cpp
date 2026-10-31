@@ -838,8 +838,10 @@ HLE_STDCALL(D3DDevice_Swap, 1) {
     game::WidenAspect();
     game::ApplyGraphicsSwitches();
     game::ApplyCheats();
+    game::ResetCarFrame(ctx);
     game::CaptureFont();
     game::FeFrame();
+    game::OptionsBindingFrame(ctx);
     LogTargets(g_presents);
     if (g_trace) LOGI("trace: swap");
     g_trace = logx::kVerbose && g_presents % 600 < 4;

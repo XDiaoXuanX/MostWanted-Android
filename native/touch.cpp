@@ -395,7 +395,7 @@ enum class Role : uint8_t { None, Stick, Look, Button, Drag, Pinch, FeMouse, Whe
 
 // a control of the touch layout: what it shows and presses, on the controller (analog 0-7, button bits from 8) or on
 // the host. Where it sits is the layout's, which the player edits
-enum : int { kSteerWheel = -5, kSteerRight = -4, kSteerLeft = -3, kPanel = -1, kAnalogA = 0, kAnalogB = 1, kAnalogX = 2, kAnalogY = 3, kAnalogLT = 6, kAnalogRT = 7 };
+enum : int { kResetCar = -6, kSteerWheel = -5, kSteerRight = -4, kSteerLeft = -3, kPanel = -1, kAnalogA = 0, kAnalogB = 1, kAnalogX = 2, kAnalogY = 3, kAnalogLT = 6, kAnalogRT = 7 };
 constexpr int kBit = 8;  // kBit + n: buttons bit n (dpad up down left right, start, back, left thumb, right thumb)
 enum class Icon : uint8_t { Text, Pause, Gear, Back, Gyro, Up, Down, Left, Right, Wheel };
 // how a control is drawn and touched: a circle, a shoulder's tab, a small pill, the dpad's rounded square, a racing
@@ -434,6 +434,8 @@ constexpr Button kButtons[] = {
     {"steer_right", "Steer right", Icon::Right, kSteerRight, Shape::Square},
     // a steering wheel turned by a finger dragged round it; shown when STEERING is WHEEL
     {"wheel", "Wheel", Icon::Wheel, kSteerWheel, Shape::Round},
+    // the player's car put back on the road (src/game/game.cpp's ResetCarFrame): the console has no button for it
+    {"reset_car", "RESET", Icon::Text, kResetCar, Shape::Round},
 };
 constexpr size_t kButtonCount = std::size(kButtons);
 constexpr size_t kStick = kButtonCount;  // the sticks' places, after the buttons'
@@ -456,7 +458,7 @@ struct Place {
 };
 using Layout = std::array<Place, kPlaces>;
 // The layout's places, as the editor's reset puts them: a b x y, black white, lt rt, start back, the settings, the
-// dpad's up down left right, the steering arrows, the wheel, the left stick and the right stick.
+// dpad's up down left right, the steering arrows, the wheel, RESET, the left stick and the right stick.
 // As a mobile racing game: steering arrows under the left thumb, the gas and brake pedals (RT, LT) under the right,
 // Nitrous over the gas, the e-brake over the brake, Speedbreaker and Look Back near them; a small dpad for the menus
 // high on the left, Back, the settings and Start along the top, Black (the camera) in the top right corner, the gear
@@ -467,7 +469,7 @@ constexpr Layout kRacing = {{
     {0.765f, 0.85f, 0.085f}, {0.915f, 0.74f, 0.17f},
     {0.585f, 0.075f, 0.036f}, {0.415f, 0.075f, 0.036f}, {0.50f, 0.075f, 0.045f},
     {0.07f, 0.28f, 0.038f}, {0.07f, 0.46f, 0.038f}, {0.03f, 0.37f, 0.038f}, {0.11f, 0.37f, 0.038f},
-    {0.08f, 0.76f, 0.11f}, {0.25f, 0.76f, 0.11f}, {0.15f, 0.70f, 0.19f},
+    {0.08f, 0.76f, 0.11f}, {0.25f, 0.76f, 0.11f}, {0.15f, 0.70f, 0.19f}, {0.33f, 0.075f, 0.036f},
     {0.17f, 0.76f, 0.12f, true}, {0.55f, 0.80f, 0.10f},
 }};
 
@@ -624,10 +626,10 @@ bool FeMenu() { return !g_editing && game::FeMenuShown(); }
 
 constexpr float kTabAspect = 2.3f, kPillAspect = 2.1f, kPedalAspect = 0.6f;
 
-// In a FEng menu the face buttons give way to the menu's own, labelled pills stacked low on the left: ENTER (A) and
-// CLOSE (B) always, for a screen whose accept no tap reaches (no highlighted item, a prompt that is not a mouse
-// region), and X, Y and the triggers only while the screen shows their prompt, with its label ("DEFAULTS", the
-// showcase's "ZOOM IN")
+// In a FEng menu the face buttons give way to the menu's own, labelled pills stacked low on the right, the dpad low
+// on the left: each pill only while the screen shows its prompt, with its label ("DEFAULTS", the showcase's
+// "ZOOM IN"); a screen prompting nothing keeps ENTER (A) and CLOSE (B), its way in and out when no tap reaches its
+// accept (no highlighted item, a prompt that is not a mouse region)
 int FePrompt(int press) {
     if (press >= kAnalogA && press <= kAnalogY) return press;
     if (press == kAnalogLT) return game::kFePromptLT;
@@ -639,10 +641,19 @@ std::string FeLabel(size_t i) {
     const Button& b = kButtons[i];
     int prompt = FePrompt(b.press);
     if (!FeMenu() || prompt < 0) return {};
-    if (b.press == kAnalogA) return app::Ui("ENTER");
-    if (b.press == kAnalogB) return app::Ui("CLOSE");
     game::FePrompts p = game::CurrentFePrompts();
+    if (b.press == kAnalogA || b.press == kAnalogB) {
+        bool any = std::any_of(std::begin(p.shown), std::end(p.shown), [](bool s) { return s; });
+        if (any && !p.shown[prompt]) return {};
+        if (!p.label[prompt].empty()) return p.label[prompt];
+        return app::Ui(b.press == kAnalogA ? "ENTER" : "CLOSE");
+    }
     if (!p.shown[prompt]) return {};
+    // triggers prompted with no label beside either are no prompt (the options screens' L1 and R1 images): the map's
+    // and the showcase's have one at least
+    if ((prompt == game::kFePromptLT || prompt == game::kFePromptRT) && p.label[game::kFePromptLT].empty() &&
+        p.label[game::kFePromptRT].empty())
+        return {};
     // the triggers zoom wherever they are prompted (the showcase, the world map): a label that is no action (the
     // map's L is followed by its zoom, "ZOOM 1.5X", its R by nothing) gives way to ZOOM OUT and ZOOM IN
     if (prompt == game::kFePromptLT || prompt == game::kFePromptRT) {
@@ -656,10 +667,16 @@ std::string FeLabel(size_t i) {
     return p.label[prompt].empty() ? std::string(b.label) : p.label[prompt];
 }
 bool FeFace(size_t i) { return !FeLabel(i).empty(); }
-// their left edges and middles, by prompt: A at the bottom, then B, Y and X up the side, the triggers above (RT, the
-// showcase's zoom in, on top); r their half height
-constexpr Place kFeFaces[] = {{0.03f, 0.90f, 0.04f}, {0.03f, 0.80f, 0.04f}, {0.03f, 0.60f, 0.04f},
-                              {0.03f, 0.70f, 0.04f}, {0.03f, 0.50f, 0.04f}, {0.03f, 0.40f, 0.04f}};
+// A, B, X and Y in a FEng menu: their art as a pad's diamond low on the right, the prompt's label under each; the
+// triggers, rarer (the map's and the showcase's zoom), stay labelled pills side by side above it
+bool FeIcon(size_t i) { return FeFace(i) && kButtons[i].press >= kAnalogA && kButtons[i].press <= kAnalogY; }
+// the dpad in a FEng menu: its middle and the buttons' steps from it, in screen heights from the left and the top
+constexpr float kFeDpadX = 0.15f, kFeDpadY = 0.74f, kFeDpadStep = 0.095f, kFeDpadR = 0.045f;
+bool FeDpad(size_t i) { return i < kButtonCount && FeMenu() && kButtons[i].press >= kBit && kButtons[i].press <= kBit + 3; }
+// the diamond's middle in screen heights from the right and the top, its buttons' steps from it and radius; the
+// triggers' pills a step and a half above it, either side of its middle
+constexpr float kFeDiamondX = 0.19f, kFeDiamondY = 0.70f, kFeDiamondStep = 0.12f, kFeDiamondR = 0.05f;
+constexpr float kFeTriggerR = 0.036f;
 constexpr float kFeTextSize = 0.8f;  // the label's height over the pill's half height
 // a pill's half width: its label's (ImGui's default font is monospaced, 7 of 13 pixels a letter) and some
 float FeHalfWidth(const std::string& label, float hh) {
@@ -678,7 +695,7 @@ bool ButtonShown(size_t i) {
     const Button& b = kButtons[i];
     if (!SteeringShown(b.press)) return false;
     if (g_editing) return true;
-    if (FeFace(i)) return true;
+    if (FeFace(i) || FeDpad(i)) return true;
     if (g_layout[i].hidden) return false;
     if (FeMenu()) return b.keep;  // the settings gear alone
     if (!game::Racing()) return b.keep;  // no pad out of a race: the front end's screens, the loading screens
@@ -699,7 +716,7 @@ Art g_art[] = {{"a", 1.0f},     {"b", 1.0f},     {"x", 1.0f},          {"y", 1.0
                {"lt", 0.698f},  {"rt", 1.2345f}, {"black", 1.0f},      {"start", 1.0f},
                {"back", 1.0f},  {"up", 1.0f},    {"down", 1.0f},       {"left", 1.0f},
                {"right", 1.0f}, {"wheel", 1.0f}, {"stick_ring", 1.0f}, {"stick_knob", 1.0f},
-               {"stick_shift", 1.66f}};
+               {"stick_shift", 1.66f}, {"reset_car", 1.0f}};  // reset_car: tools/reset_icon.py
 
 const Art* FindArt(std::string_view name) {
     for (const Art& a : g_art)
@@ -709,7 +726,7 @@ const Art* FindArt(std::string_view name) {
 
 // a control's art: by its id, the dpad and the steering arrows sharing the arrows; nullptr to draw it as before
 const Art* ArtOf(size_t i) {
-    if (i >= kButtonCount || FeFace(i)) return nullptr;
+    if (i >= kButtonCount || (FeFace(i) && !FeIcon(i))) return nullptr;
     std::string_view id = kButtons[i].id;
     if (id.starts_with("dpad_")) id.remove_prefix(5);
     else if (id.starts_with("steer_")) id.remove_prefix(6);
@@ -728,15 +745,28 @@ void DrawArt(ImDrawList* dl, const Art& a, ImVec2 c, float hh, ImU32 tint, float
                    ImVec2(a.uv0.x, a.uv1.y), tint);
 }
 
-// a control's place: its layout's, or the FEng menus' own for a face button
-const Place& PlaceOf(size_t i) {
-    return i < kButtonCount && FeFace(i) ? kFeFaces[FePrompt(kButtons[i].press)] : g_layout[i];
+// a control's place: its layout's, or the FEng menus' own for a face button, a trigger and the dpad
+Place PlaceOf(size_t i) {
+    float h = Height(), w = std::max(Width(), 1.0f);
+    if (i < kButtonCount && FeFace(i)) {
+        // A bottom, B right, X left, Y top, as on the pad; LT left and RT right above
+        constexpr float kStep[game::kFePromptCount][2] = {{0, 1}, {1, 0}, {-1, 0}, {0, -1}, {-0.9f, -2.3f}, {0.9f, -2.3f}};
+        const float* s = kStep[FePrompt(kButtons[i].press)];
+        float x = w - (kFeDiamondX - s[0] * kFeDiamondStep) * h;
+        return {x / w, kFeDiamondY + s[1] * kFeDiamondStep, FeIcon(i) ? kFeDiamondR : kFeTriggerR};
+    }
+    if (FeDpad(i)) {
+        constexpr float kStep[4][2] = {{0, -1}, {0, 1}, {-1, 0}, {1, 0}};  // up, down, left, right
+        const float* s = kStep[kButtons[i].press - kBit];
+        return {(kFeDpadX + s[0] * kFeDpadStep) * h / w, kFeDpadY + s[1] * kFeDpadStep, kFeDpadR};
+    }
+    return g_layout[i];
 }
 
 void Centre(size_t i, float& cx, float& cy) {
-    cx = PlaceOf(i).x * Width();
-    cy = PlaceOf(i).y * Height();
-    if (std::string label = FeLabel(i); !label.empty()) cx += FeHalfWidth(label, PlaceOf(i).r * g_scale * Height());
+    Place p = PlaceOf(i);
+    cx = p.x * Width();
+    cy = p.y * Height();
 }
 
 float Radius(size_t i) { return PlaceOf(i).r * g_scale * Height(); }
@@ -745,6 +775,7 @@ bool Pedal(size_t i) { return kButtons[i].press == kAnalogLT || kButtons[i].pres
 
 // a control's shape: the triggers are pedals
 Shape ShapeOf(size_t i) {
+    if (FeIcon(i)) return Shape::Round;
     if (FeFace(i)) return Shape::Pill;
     if (const Art* a = ArtOf(i)) return a->body == 1.0f ? Shape::Round : Shape::Pedal;  // a pedal's art: its own size
     return Pedal(i) ? Shape::Pedal : kButtons[i].shape;
@@ -753,6 +784,10 @@ Shape ShapeOf(size_t i) {
 // a control's half width and half height, pixels
 void Extent(size_t i, float& hw, float& hh) {
     hh = Radius(i);
+    if (FeIcon(i)) {
+        hw = hh;
+        return;
+    }
     if (std::string label = FeLabel(i); !label.empty()) {
         hw = FeHalfWidth(label, hh);
         return;
@@ -832,6 +867,28 @@ size_t HitButton(float x, float y) {
         }
     }
     return kButtonCount;
+}
+
+// The steering arrows are one strip under the thumb, a racing game's: a finger down anywhere along it, the gap between
+// them too, takes the nearer arrow, and rolled across it steers the other way. Held to the arrow it came down on, a
+// thumb rolled from left to right still steered left until lifted, and one down in the gap steered nothing
+size_t SteerArrowAt(float x, float y) {
+    size_t left = kButtonCount, right = kButtonCount;
+    for (size_t i = 0; i < kButtonCount; i++) {
+        if (kButtons[i].press == kSteerLeft) left = i;
+        if (kButtons[i].press == kSteerRight) right = i;
+    }
+    if (left == kButtonCount || right == kButtonCount || !ButtonShown(left) || !ButtonShown(right)) return kButtonCount;
+    float lx, ly, rx, ry, lw, lh, rw, rh;
+    Centre(left, lx, ly);
+    Centre(right, rx, ry);
+    Extent(left, lw, lh);
+    Extent(right, rw, rh);
+    if (lx > rx) return kButtonCount;  // the editor put them the other way round: each its own button
+    constexpr float kSlack = 1.4f;  // the strip's reach past the arrows, in their half sizes
+    float hh = std::max(lh, rh) * kSlack, my = (ly + ry) / 2;
+    if (x < lx - lw * kSlack || x > rx + rw * kSlack || std::fabs(y - my) > hh + std::fabs(ly - ry) / 2) return kButtonCount;
+    return x - lx < rx - x ? left : right;
 }
 
 // a stick's deflection from where the finger came down, its radius the stick's
@@ -1087,6 +1144,7 @@ void FingerDown(SDL_FingerID id, float x, float y) {
     }
     input::g_touch = true;
     size_t b = HitButton(x, y);
+    if (b == kButtonCount) b = SteerArrowAt(x, y);
     if (b < kButtonCount && kButtons[b].press == kSteerWheel) {
         f.role = Role::Wheel;
         f.button = b;
@@ -1108,6 +1166,7 @@ void FingerDown(SDL_FingerID id, float x, float y) {
                 app::ToggleMenu();
             }
         }
+        if (kButtons[b].press == kResetCar) game::g_reset_car = true;
     } else if (FeMenu() && game::CurrentFePrompts().right_stick) {
         f.role = Role::FeTap;  // FEng's pointer would click whatever the drag began on (the map's GPS)
     } else if (FeMenu()) {
@@ -1153,6 +1212,12 @@ void FingerMove(SDL_FingerID id, float x, float y) {
             }
         }
         if (f.role == Role::Stick) UpdateStick(f);
+        // a thumb rolled across the steering arrows steers the way it is now, the turn coming in again from the start
+        if (f.role == Role::Button && (kButtons[f.button].press == kSteerLeft || kButtons[f.button].press == kSteerRight))
+            if (size_t s = SteerArrowAt(x, y); s != kButtonCount && s != f.button) {
+                f.button = s;
+                f.down_ms = NowMs();
+            }
         // a menu prompting the right stick (the showcase turning the car, the map's cursor): a drag past a tap's reach
         // is the stick from where it came down
         if (f.role == Role::FeTap && std::hypot(f.x - f.x0, f.y - f.y0) >= kSwipe * Height()) f.role = Role::Look;
@@ -1531,9 +1596,22 @@ void DrawWheel(ImDrawList* dl, ImVec2 c, float r, bool on, int fade, float th) {
     dl->AddCircleFilled(at(-90.0f, 1.0f - rim / (2 * r)), rim * 0.55f, Fade(kSaffron, 230 * fade / 100), 16);
 }
 
+// a face button's move under it, in a dark band to read over the game
+void DrawCaption(ImDrawList* dl, size_t i, float cx, float cy, int fade, const char* caption) {
+    float size = Radius(i) * 0.42f;
+    ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(size, FLT_MAX, 0, caption);
+    ImVec2 at(cx, cy + Radius(i) + size * 0.75f);
+    dl->AddRectFilled(ImVec2(at.x - ts.x / 2 - size * 0.35f, at.y - ts.y / 2 - size * 0.05f),
+                      ImVec2(at.x + ts.x / 2 + size * 0.35f, at.y + ts.y / 2 + size * 0.05f), Fade(kGlass, 130 * fade / 100),
+                      size * 0.3f);
+    CentredText(dl, at, size, Fade(kCream, 215 * fade / 100), caption);
+}
+
 void DrawControl(ImDrawList* dl, size_t i, bool on, int fade, float th) {
     const Button& b = kButtons[i];
-    if (std::string label = FeLabel(i); !label.empty()) {  // a menu's pill: glass rimmed in the button's colour
+    // a menu's A, B, X or Y: as in a race, its prompt's label for its caption
+    std::string menu_caption = FeIcon(i) ? FeLabel(i) : std::string();
+    if (std::string label = FeLabel(i); !label.empty() && menu_caption.empty()) {  // a menu's pill: glass rimmed in the button's colour
         float cx, cy, hw, hh;
         Centre(i, cx, cy);
         Extent(i, hw, hh);
@@ -1543,12 +1621,13 @@ void DrawControl(ImDrawList* dl, size_t i, bool on, int fade, float th) {
         CentredText(dl, ImVec2(cx, cy), hh * kFeTextSize, on ? Fade(255, 255, 255, 255) : Fade(kCream, 235), label.c_str());
         return;
     }
-    if (const Art* art = ArtOf(i)) {  // its look and its name are the art's: no caption
+    if (const Art* art = ArtOf(i)) {  // its look and its name are the art's: no caption but a menu's
         float cx, cy;
         Centre(i, cx, cy);
         float hh = Radius(i);
         if (b.press == kSteerWheel) DrawArt(dl, *art, ImVec2(cx, cy), hh, ArtTint(on, fade), g_wheel_turn * kPi / 180.0f);
         else DrawArt(dl, *art, ImVec2(cx, cy), on ? hh * 0.92f : hh, ArtTint(on, fade));
+        if (!menu_caption.empty()) DrawCaption(dl, i, cx, cy, fade, menu_caption.c_str());
         return;
     }
     if (b.press == kSteerWheel) {
@@ -1615,15 +1694,8 @@ void DrawControl(ImDrawList* dl, size_t i, bool on, int fade, float th) {
         float size = shape == Shape::Round ? hh * 1.05f : shape == Shape::Pill ? hh * 0.78f : hh * 0.8f;
         CentredText(dl, ImVec2(cx, cy - (shape == Shape::Tab ? hh * 0.08f : 0)), size, text, b.label);
     }
-    if (b.caption) {  // its move under it, in a dark band to read over the game
-        float size = Radius(i) * 0.42f;
-        ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(size, FLT_MAX, 0, b.caption);
-        ImVec2 at(cx, cy + Radius(i) + size * 0.75f);
-        dl->AddRectFilled(ImVec2(at.x - ts.x / 2 - size * 0.35f, at.y - ts.y / 2 - size * 0.05f),
-                          ImVec2(at.x + ts.x / 2 + size * 0.35f, at.y + ts.y / 2 + size * 0.05f), Fade(kGlass, 130 * fade / 100),
-                          size * 0.3f);
-        CentredText(dl, at, size, Fade(kCream, 215 * fade / 100), b.caption);
-    }
+    if (!menu_caption.empty()) DrawCaption(dl, i, cx, cy, fade, menu_caption.c_str());
+    else if (b.caption) DrawCaption(dl, i, cx, cy, fade, b.caption);
 }
 
 // the editor's boxes for the HUD's items, under the controls

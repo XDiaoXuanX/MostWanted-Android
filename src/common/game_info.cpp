@@ -1,3 +1,4 @@
+#include "common/fe_mouse.h"
 #include <toml++/toml.hpp>
 
 #include "app/app.h"
@@ -15,8 +16,11 @@ namespace {
 void Pad(int port, input::Pad& pad) {
     input::SeenPad(pad);
     if (port == 0) pad.connected = true;
-    if (app::MenuOpen()) pad = input::Pad{.connected = pad.connected};
-    else if (port == 0) input::Keyboard(pad);
+    const bool panel = app::MenuOpen();
+    if (!panel && port == 0) input::Keyboard(pad);
+    const bool consumed = OptionsMenuPad(port, pad);
+    if (panel || consumed)
+        pad = input::Pad{.connected = pad.connected};
 }
 
 // no vibration while the keyboard and mouse are in use
@@ -30,6 +34,10 @@ void Rumble(int port, uint16_t& left, uint16_t& right) {
 void Load(const void* table) {
     const toml::table& t = *static_cast<const toml::table*>(table);
     Options& o = Opt();
+    // Settings from before version 4 stored FULL (0) as the default. Move that old default to QUARTER;
+    // explicit half, quarter and off choices are kept.
+    if (t["defaults"].value_or(int64_t(0)) < 4 && t["car_reflections"].value_or(int64_t(2)) == 0)
+        o.reflections = 2;
     std::string language = t["language"].value_or(o.language);
     // a language no longer offered (French, German, Italian, Spanish) goes back to English
     if (KnownLanguage(language) && LanguageAvailable(language)) o.language = language;

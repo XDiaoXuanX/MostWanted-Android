@@ -1004,8 +1004,9 @@ public:
     void SyncLate(uint32_t data) override;
     bool DeliverLate(uint32_t data) override;
     void RecordLate(uint32_t data) override;
-    void Flush() override { Submit(true, false); }
+    void Flush() override { if (!gpu_failed_) Submit(true, false); }
     void SetGamma(const uint8_t* ramp) override {
+        if (gpu_failed_) return;
         std::memcpy(ramp_, ramp, sizeof(ramp_));
         ramp_dirty_ = true;
     }
@@ -1093,12 +1094,13 @@ private:
 
     // command recording
     void Begin();
-    void Submit(bool wait, bool present);
-    void WaitValue(uint64_t v);
+    bool Submit(bool wait, bool present);
+    bool WaitValue(uint64_t v);
     uint64_t Completed();
-    VkFence SubmitFence(uint64_t value);
+    VkFence SubmitFence(VkResult& result);
+    void FailGpu(const char* operation, VkResult result, uint64_t value);
     void PollFences();
-    void ResetFrame(Frame& f);
+    bool ResetFrame(Frame& f);
     void Transition(Image& im, VkImageLayout to);
     void BeginRender(Image* color, Image* depth);
     void EndRender();
@@ -1126,6 +1128,8 @@ private:
     Target* FindTarget(const Surface& s, bool depth);
     float TargetScale(uint64_t key, uint32_t gw, uint32_t gh) const;
     Target* EnsureTarget(const Surface& s, bool depth);
+    Target* FrameRegion(const Surface& s, uint32_t& rows, uint32_t& sub_h);
+    Target* EnsureColor(const Surface& s, uint32_t& rows, uint32_t& sub_h);
     void ReleaseTarget(std::unordered_map<uint64_t, Target>::iterator it);
     void UploadTarget(Target& t, const Surface& s);
     bool PixelImage(Image& im, const std::vector<uint8_t>& px, uint32_t pitch, uint32_t w, uint32_t h);
@@ -1146,12 +1150,13 @@ private:
     VkImageView BindGuestTexture(const State& s, int stage, const TextureDesc& d, const FormatInfo& fi,
                                  DrawTextures& stages);
     VkImageView BindCubeTargets(int stage, const TextureDesc& d, DrawTextures& stages);
+    VkImageView BindFrameRegion(int stage, const TextureDesc& d, DrawTextures& stages);
     bool CreateTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, uint64_t key);
     void UploadTexture(Tex& tx, const TextureDesc& d, const FormatInfo& fi, const uint8_t* p, const uint32_t* colours);
     void BuildPipelineKey(const State& s, const Assembled& a, const DrawShaders& sh, PsoKey& k);
     void KeyDepthStencil(const State& s, const Assembled& a, PsoKey& k);
     void ClearTarget(Target& t, const State& s, uint32_t count, const uint8_t* rects, uint32_t flags, uint32_t color,
-                     float z, uint32_t stencil);
+                     float z, uint32_t stencil, uint32_t rows = 0, uint32_t sub_h = 0);
 
     // present
     bool AcquireImage(uint32_t& index);
@@ -1191,6 +1196,7 @@ private:
     PFN_vkGetSemaphoreCounterValueKHR counter_value_ = nullptr;
     bool dynamic_ = true;  // dynamic rendering; Vulkan 1.1 drivers (older Adrenos) only have render passes
     bool timeline_ok_ = true;  // without it a fence per submit stands in for the timeline's values
+    std::atomic<bool> gpu_failed_{false};
     struct Pending {
         uint64_t value;
         VkFence fence;
@@ -1253,8 +1259,10 @@ private:
     std::unordered_map<uint64_t, VkSampler> samplers_;
     std::unordered_map<uint64_t, Target> targets_;
     std::unordered_set<uint64_t> full_scale_;  // effect sized targets drawn with a frame sized one: at its scale
+    uint32_t presented_[4] = {};  // the frame buffers presented, their data: FrameRegion's parents
     std::unordered_map<uint64_t, Tex> textures_;
     std::unordered_map<uint32_t, CubeOfTargets> cubes_;
+    std::unordered_map<uint32_t, Image> regions_;  // a frame's rows read as a texture, by its data (BindFrameRegion)
     uint64_t view_gen_ = 1;  // image views destroyed so far (Frame::sets)
     // the last draw's keys, results and vertex constants: consecutive draws mostly share their shaders and pipeline,
     // and many their constants, so the hashing, the lookups and the 3 KB upload are skipped for them
@@ -1330,6 +1338,7 @@ bool VulkanBackend::Init(uint32_t width, uint32_t height) {
     alloc_.Init(pd_, dev_);
     if (!CreateLayouts() || !CreateFrames() || !CreateSwapchain() || !CreateFixedImages()) return false;
     Begin();
+    if (gpu_failed_) return false;
     ui_ = InitUi();
     scale_ = app::RenderScale(guest_h_);
     LOGI("vulkan: %ux%u guest, %ux%u screen, render scale %.3f", width, height, swap_extent_.width,
@@ -1714,8 +1723,10 @@ void VulkanBackend::ResetPools() {
             f = resets_.front();
             resets_.pop_front();
         }
-        WaitValue(f->value);
-        vkResetCommandPool(dev_, f->pool, 0);
+        if (WaitValue(f->value)) {
+            VkResult r = vkResetCommandPool(dev_, f->pool, 0);
+            if (r != VK_SUCCESS) FailGpu("vkResetCommandPool", r, f->value);
+        }
         {
             std::lock_guard lock(reset_m_);
             f->pool_clean = true;
@@ -1736,7 +1747,7 @@ void VulkanBackend::QueuePoolReset(Frame& f) {
 
 void VulkanBackend::AwaitPoolReset(Frame& f) {
     std::unique_lock lock(reset_m_);
-    reset_done_cv_.wait(lock, [&] { return f.pool_clean; });
+    reset_done_cv_.wait(lock, [&] { return f.pool_clean || gpu_failed_; });
 }
 
 bool VulkanBackend::CreateFixedImages() {
@@ -1759,6 +1770,7 @@ bool VulkanBackend::CreateFixedImages() {
     point_ = Sampler(sc);
     // the first frame's commands: the fixed images cleared to black, the ramp the identity
     Begin();
+    if (gpu_failed_) return false;
     VkClearColorValue black{};
     for (Image* im : {&lut_, &dummy_[0], &dummy_[1], &dummy_[2]}) {
         Transition(*im, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
@@ -1775,10 +1787,18 @@ bool VulkanBackend::CreateFixedImages() {
     }
     for (int i = 0; i < 768; i++) ramp_[i] = uint8_t(i & 255);
     UploadGammaRamp();
-    Submit(true, false);
+    if (gpu_failed_ || !Submit(true, false)) return false;
     // Submit(true) began the next recording; Init begins once more
-    vkEndCommandBuffer(Cb());
-    vkResetCommandPool(dev_, CurrentFrame().pool, 0);
+    VkResult end = vkEndCommandBuffer(Cb());
+    if (end != VK_SUCCESS) {
+        FailGpu("vkEndCommandBuffer", end, value_);
+        return false;
+    }
+    VkResult reset = vkResetCommandPool(dev_, CurrentFrame().pool, 0);
+    if (reset != VK_SUCCESS) {
+        FailGpu("vkResetCommandPool", reset, value_);
+        return false;
+    }
     return true;
 }
 
@@ -1897,6 +1917,7 @@ void VulkanBackend::Destroy(Buffer& b) {
 // bytes in this frame's ring; a big upload gets a buffer of its own, released with the frame. A full ring flushes:
 // callers upload before they begin rendering and bind
 VulkanBackend::Alloc VulkanBackend::Upload(VkDeviceSize size, VkDeviceSize align) {
+    if (gpu_failed_) return {VK_NULL_HANDLE, 0, nullptr};
     if (size > kUploadSize / 4) {
         Buffer b;
         if (!CreateBuffer(b, size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
@@ -1910,7 +1931,7 @@ VulkanBackend::Alloc VulkanBackend::Upload(VkDeviceSize size, VkDeviceSize align
     Frame* f = &CurrentFrame();
     VkDeviceSize o = (f->used + align - 1) / align * align;
     if (o + size > kUploadSize) {
-        Submit(true, false);
+        if (!Submit(true, false)) return {VK_NULL_HANDLE, 0, nullptr};
         f = &CurrentFrame();
         o = 0;
     }
@@ -1920,6 +1941,7 @@ VulkanBackend::Alloc VulkanBackend::Upload(VkDeviceSize size, VkDeviceSize align
 
 VulkanBackend::Alloc VulkanBackend::Constants(const void* data, size_t bytes) {
     Alloc a = Upload(kUboRange, kUboAlign);
+    if (!a.cpu) return a;
     std::memcpy(a.cpu, data, std::min<size_t>(bytes, kUboRange));
     return a;
 }
@@ -1927,9 +1949,14 @@ VulkanBackend::Alloc VulkanBackend::Constants(const void* data, size_t bytes) {
 // ---- command recording
 
 void VulkanBackend::Begin() {
+    if (gpu_failed_) return;
     VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(Cb(), &bi);
+    VkResult r = vkBeginCommandBuffer(Cb(), &bi);
+    if (r != VK_SUCCESS) {
+        FailGpu("vkBeginCommandBuffer", r, value_);
+        return;
+    }
     if (VkQueryPool q = CurrentFrame().times) {
         vkCmdResetQueryPool(Cb(), q, 0, 2);
         vkCmdWriteTimestamp(Cb(), VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, q, 0);
@@ -1938,66 +1965,100 @@ void VulkanBackend::Begin() {
     rend_color_ = rend_depth_ = nullptr;
 }
 
+void VulkanBackend::FailGpu(const char* operation, VkResult result, uint64_t value) {
+    if (!gpu_failed_.exchange(true, std::memory_order_relaxed))
+        LOGE("vulkan: %s failed for GPU value %llu (%d); rendering stopped", operation,
+             (unsigned long long)value, int(result));
+}
+
 uint64_t VulkanBackend::Completed() {
+    if (gpu_failed_) return 0;
     if (!timeline_ok_) {
         std::lock_guard lock(fence_lock_);
         PollFences();
         return fenced_;
     }
     uint64_t v = 0;
-    counter_value_(dev_, timeline_, &v);
+    VkResult r = counter_value_(dev_, timeline_, &v);
+    if (r != VK_SUCCESS) FailGpu("vkGetSemaphoreCounterValue", r, 0);
     return v;
 }
 
 // the signalled fences, oldest first, back to the spares; called with fence_lock_ held
 void VulkanBackend::PollFences() {
     size_t done = 0;
-    while (done < pending_.size() && vkGetFenceStatus(dev_, pending_[done].fence) == VK_SUCCESS) {
+    while (done < pending_.size()) {
+        VkResult r = vkGetFenceStatus(dev_, pending_[done].fence);
+        if (r == VK_NOT_READY) break;
+        if (r != VK_SUCCESS) {
+            FailGpu("vkGetFenceStatus", r, pending_[done].value);
+            break;
+        }
+        VkResult reset = vkResetFences(dev_, 1, &pending_[done].fence);
+        if (reset != VK_SUCCESS) {
+            FailGpu("vkResetFences", reset, pending_[done].value);
+            break;
+        }
         fenced_ = pending_[done].value;
-        vkResetFences(dev_, 1, &pending_[done].fence);
         spare_fences_.push_back(pending_[done].fence);
         done++;
     }
     pending_.erase(pending_.begin(), pending_.begin() + done);
 }
 
-// the fence the submit of this value signals; called with fence_lock_ held
-VkFence VulkanBackend::SubmitFence(uint64_t value) {
+// an unsignalled fence for the next submit; called with fence_lock_ held
+VkFence VulkanBackend::SubmitFence(VkResult& result) {
     VkFence f = VK_NULL_HANDLE;
     if (!spare_fences_.empty()) {
         f = spare_fences_.back();
         spare_fences_.pop_back();
+        result = VK_SUCCESS;
     } else {
         VkFenceCreateInfo ci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-        if (vkCreateFence(dev_, &ci, nullptr, &f) != VK_SUCCESS) return VK_NULL_HANDLE;
+        result = vkCreateFence(dev_, &ci, nullptr, &f);
+        if (result != VK_SUCCESS) return VK_NULL_HANDLE;
     }
-    pending_.push_back({value, f});
     return f;
 }
 
-void VulkanBackend::WaitValue(uint64_t v) {
-    if (!v || Completed() >= v) return;
+bool VulkanBackend::WaitValue(uint64_t v) {
+    constexpr uint64_t kGpuWaitTimeoutNs = 5'000'000'000ull;
+    if (gpu_failed_) return false;
+    if (!v) return true;
+    if (Completed() >= v) return !gpu_failed_;
+    if (gpu_failed_) return false;
     if (!timeline_ok_) {
-        // the lock is held through the wait so no fence is reset under it; the GPU needs no thread to get there
+        // The lock stays held through the bounded wait so no other thread can reset this fence.
         std::lock_guard lock(fence_lock_);
-        for (const Pending& p : pending_)
-            if (p.value >= v) {
-                vkWaitForFences(dev_, 1, &p.fence, VK_TRUE, UINT64_MAX);
-                break;
-            }
+        if (fenced_ >= v) return true;
+        auto it = std::find_if(pending_.begin(), pending_.end(), [v](const Pending& p) { return p.value >= v; });
+        if (it == pending_.end()) {
+            FailGpu("missing pending fence", VK_NOT_READY, v);
+            return false;
+        }
+        VkResult r = vkWaitForFences(dev_, 1, &it->fence, VK_TRUE, kGpuWaitTimeoutNs);
+        if (r != VK_SUCCESS) {
+            FailGpu(r == VK_TIMEOUT ? "GPU fence wait timed out" : "vkWaitForFences", r, v);
+            return false;
+        }
         PollFences();
-        return;
+        return !gpu_failed_ && fenced_ >= v;
     }
     VkSemaphoreWaitInfoKHR wi{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO_KHR};
     wi.semaphoreCount = 1;
     wi.pSemaphores = &timeline_;
     wi.pValues = &v;
-    wait_semaphores_(dev_, &wi, UINT64_MAX);
+    VkResult r = wait_semaphores_(dev_, &wi, kGpuWaitTimeoutNs);
+    if (r != VK_SUCCESS) {
+        FailGpu(r == VK_TIMEOUT ? "GPU timeline wait timed out" : "vkWaitSemaphores", r, v);
+        return false;
+    }
+    return true;
 }
 
 // the frame's garbage freed and its pools reset, once the GPU is past it
-void VulkanBackend::ResetFrame(Frame& f) {
-    WaitValue(f.value);
+bool VulkanBackend::ResetFrame(Frame& f) {
+    if (!WaitValue(f.value)) return false;
     if (f.timed) {
         f.timed = false;
         uint64_t t[2];
@@ -2023,18 +2084,24 @@ void VulkanBackend::ResetFrame(Frame& f) {
     }
     f.used = 0;
     upload_epoch_++;
+    return true;
 }
 
 // present: the frame's last commands, waiting on the acquired image and signalling its present semaphore
-void VulkanBackend::Submit(bool wait, bool present) {
+bool VulkanBackend::Submit(bool wait, bool present) {
+    if (gpu_failed_) return false;
     EndRender();
     Frame& f = CurrentFrame();
     if (f.times) {
         vkCmdWriteTimestamp(f.cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, f.times, 1);
         f.timed = true;
     }
-    vkEndCommandBuffer(f.cb);
-    uint64_t signal = ++value_;
+    VkResult end = vkEndCommandBuffer(f.cb);
+    if (end != VK_SUCCESS) {
+        FailGpu("vkEndCommandBuffer", end, value_);
+        return false;
+    }
+    uint64_t signal = value_ + 1;
     // without the timeline only the present semaphore is signalled, and a fence tells when the GPU is past
     VkSemaphore signals[2] = {timeline_, VK_NULL_HANDLE};
     uint64_t values[2] = {signal, 0};
@@ -2057,25 +2124,39 @@ void VulkanBackend::Submit(bool wait, bool present) {
     si.pCommandBuffers = &f.cb;
     si.signalSemaphoreCount = (present ? 2 : 1) - first;
     si.pSignalSemaphores = signals + first;
-    VkResult r;
+    VkResult r = VK_SUCCESS;
+    const char* failed_operation = "vkQueueSubmit";
     if (timeline_ok_) {
         r = vkQueueSubmit(queue_, 1, &si, VK_NULL_HANDLE);
     } else {
         std::lock_guard lock(fence_lock_);
-        r = vkQueueSubmit(queue_, 1, &si, SubmitFence(signal));
+        VkFence fence = SubmitFence(r);
+        if (fence) {
+            r = vkQueueSubmit(queue_, 1, &si, fence);
+            if (r == VK_SUCCESS) pending_.push_back({signal, fence});
+            else spare_fences_.push_back(fence);
+        } else failed_operation = "vkCreateFence";
     }
-    if (r != VK_SUCCESS)
-        LOGE("vulkan: submit %llu%s failed (%d)", (unsigned long long)signal, present ? " (present)" : "", int(r));
+    if (r != VK_SUCCESS) {
+        FailGpu(failed_operation, r, signal);
+        return false;
+    }
+    value_ = signal;
     f.value = signal;
     g_perf.submits++;
     if (wait) {
         auto t = std::chrono::steady_clock::now();
-        ResetFrame(f);
+        if (!ResetFrame(f)) return false;
         g_perf.stall_ns += SinceNs(t);
         g_perf.stalls++;
-        vkResetCommandPool(dev_, f.pool, 0);
+        VkResult reset = vkResetCommandPool(dev_, f.pool, 0);
+        if (reset != VK_SUCCESS) {
+            FailGpu("vkResetCommandPool", reset, signal);
+            return false;
+        }
         Begin();
     }
+    return !gpu_failed_;
 }
 
 void VulkanBackend::Transition(Image& im, VkImageLayout to) {
@@ -2855,6 +2936,35 @@ Target* VulkanBackend::EnsureTarget(const Surface& s, bool depth) {
     return &ref;
 }
 
+// A colour surface over rows of a presented frame buffer, as wide and so of its pitch: split screen's halves, the top
+// one at the frame's own address and the bottom one 240 rows in, where each player's visual treatment is drawn. A
+// target of their own never reached the frame, and the top one, at the frame's key, made the frame again every frame
+// (black under the HUD). Drawn into the frame instead, rows down; sub_h is the surface's height
+Target* VulkanBackend::FrameRegion(const Surface& s, uint32_t& rows, uint32_t& sub_h) {
+    if (!s.header) return nullptr;
+    uint32_t data = mem::VirtualFromPhysical(s.data), gw, gh;
+    SurfaceSize(s, gw, gh);
+    for (uint32_t f : presented_) {
+        if (!f || data < f) continue;
+        auto it = targets_.find(TargetMapKey(f, false));
+        if (it == targets_.end()) continue;
+        Target& t = it->second;
+        uint32_t pitch = GuestPitch(gw), off = data - f;
+        if (t.gw != gw || gh >= t.gh || off % pitch || off / pitch + gh > t.gh) continue;
+        rows = off / pitch;
+        sub_h = gh;
+        return &t;
+    }
+    return nullptr;
+}
+
+// a colour target to draw or clear: a presented frame's rows (FrameRegion), else the surface's own
+Target* VulkanBackend::EnsureColor(const Surface& s, uint32_t& rows, uint32_t& sub_h) {
+    rows = sub_h = 0;
+    if (Target* t = FrameRegion(s, rows, sub_h)) return t;
+    return EnsureTarget(s, false);
+}
+
 // BGRA pixels into a new w x h image, left readable
 bool VulkanBackend::PixelImage(Image& im, const std::vector<uint8_t>& px, uint32_t pitch, uint32_t w, uint32_t h) {
     if (!CreateImage(im, kBgra, w, h, 1, 1, 1, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
@@ -2898,6 +3008,7 @@ void VulkanBackend::Blit(Image& dst, const VkRect2D& to, Image& src, const float
     float c[8] = {uvrect[0], uvrect[1], uvrect[2], uvrect[3], o.gamma ? 1.0f : 0.0f, o.alpha ? 1.0f : 0.0f,
                   float(o.taps), o.mul};
     Alloc cb = Constants(c, sizeof(c));
+    if (!cb.cpu) return;
     VkPipeline pipe = FullScreenPipeline(kBlitHlsl, "psmain", dst.fmt, VK_FORMAT_UNDEFINED, o.over);
     if (!pipe) return;
     Transition(src, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -2940,6 +3051,7 @@ bool VulkanBackend::DepthCopy(const State& s) {
     Target& dst = di->second;
     Target& src = si->second;
     Alloc cb = Constants(nullptr, 0);
+    if (!cb.cpu) return false;
     VkPipeline pipe = FullScreenPipeline(kDepthHlsl, "psmain", VK_FORMAT_UNDEFINED, depth_fmt_, false);
     if (!pipe) return false;
     Transition(src.img, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -2991,7 +3103,7 @@ bool VulkanBackend::ReadBack(Image& im, uint32_t w, uint32_t h, std::vector<uint
     mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     mb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
     vkCmdPipelineBarrier(Cb(), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, nullptr, 0, nullptr);
-    Submit(true, false);
+    if (!Submit(true, false)) return false;
     out.assign(rb.mem.map, rb.mem.map + size_t(w) * h * 4);
     Destroy(rb);
     return true;
@@ -3132,7 +3244,10 @@ void VulkanBackend::UploadTexture(Tex& tx, const TextureDesc& d, const FormatInf
             uint32_t rows = bc ? std::max(1u, (mh + 3) / 4) : mh;
             size_t src_rows = pitch ? src->size() / pitch / md : 0;
             Alloc a = Upload(VkDeviceSize(row) * rows * md, 16);
-            if (!a.cpu) continue;
+            if (!a.cpu) {
+                if (gpu_failed_) return;
+                continue;
+            }
             g_perf.tex_bytes += uint64_t(row) * rows * md;
             for (uint32_t z = 0; z < md; z++)
                 for (uint32_t y = 0; y < rows; y++) {
@@ -3202,6 +3317,8 @@ VkImageView VulkanBackend::BindTexture(const State& s, int stage, DrawTextures& 
     const FormatInfo& fi = Format(d.format);
     info.kind = TextureKind(d);
     info.rect = d.linear;
+    if (!d.cube && d.depth == 1 && !fi.compressed && !fi.depth)
+        if (VkImageView v = BindFrameRegion(stage, d, stages)) return v;
     auto tit = targets_.find(TargetMapKey(d.data, fi.depth));
     if (tit != targets_.end() && !d.cube && d.depth == 1 && !fi.compressed)
         return BindTargetTexture(s, stage, d, tit->second, true, stages);
@@ -3217,6 +3334,41 @@ VkImageView VulkanBackend::BindTexture(const State& s, int stage, DrawTextures& 
     if (tit != targets_.end() && d.cube && !fi.depth && !fi.compressed)
         if (VkImageView v = BindCubeTargets(stage, d, stages)) return v;
     return BindGuestTexture(s, stage, d, fi, stages);
+}
+
+// A presented frame's rows read as a texture of their own (FrameRegion's surfaces: split screen's visual treatment
+// reads each player's half of the frame): the top half has the frame's address and bound the whole frame, both views
+// squeezed into it, and the bottom one matched no target and read guest memory, black. Copied out of the frame, at
+// each bind as Feedback is, since the pass draws over the rows it reads
+VkImageView VulkanBackend::BindFrameRegion(int stage, const TextureDesc& d, DrawTextures& stages) {
+    for (uint32_t f : presented_) {
+        if (!f || d.data < f) continue;
+        auto it = targets_.find(TargetMapKey(f, false));
+        if (it == targets_.end()) continue;
+        Target& t = it->second;
+        uint32_t pitch = GuestPitch(d.width), off = d.data - f;
+        if (t.gw != d.width || d.height >= t.gh || off % pitch || off / pitch + d.height > t.gh) continue;
+        float sc = float(t.h) / t.gh;
+        uint32_t y = std::min(t.h - 1, uint32_t(std::lround(off / pitch * sc)));
+        uint32_t h = std::clamp(uint32_t(std::lround(d.height * sc)), 1u, t.h - y);
+        Image& im = regions_[d.data];
+        if (im && (im.w != t.w || im.h != h || im.fmt != t.img.fmt)) Retire(im);
+        if (!im && !CreateImage(im, t.img.fmt, t.w, h, 1, 1, 1, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                VK_IMAGE_VIEW_TYPE_2D))
+            return VK_NULL_HANDLE;
+        Transition(t.img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        Transition(im, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        VkImageCopy c{{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, int32_t(y), 0}, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                      {0, 0, 0}, {t.w, h, 1}};
+        vkCmdCopyImage(Cb(), t.img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, im.image,
+                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
+        Transition(im, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        stages.rt[stage] = true;
+        stages.info[stage].kind = kTex2D;
+        stages.fmt[stage] = im.fmt;
+        return im.view;
+    }
+    return VK_NULL_HANDLE;
 }
 
 // a cube drawn face by face as six targets: guest memory never sees those draws, so the faces are copied into a cube
@@ -3314,12 +3466,14 @@ void VulkanBackend::BuildPipelineKey(const State& s, const Assembled& a, const D
 }
 
 void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t count, const uint8_t* indices) {
+    if (gpu_failed_) return;
     if (DepthCopy(s)) return;
     Assembled& a = asm_;
     if (!Assemble(s, prim, start, count, indices, a)) return;
 
     // the targets, CPU writes to them first
-    Target* rt = EnsureTarget(s.rt, false);
+    uint32_t rows, sub_h;
+    Target* rt = EnsureColor(s.rt, rows, sub_h);
     Target* ds = s.rs[kRsZEnable] || s.rs[kRsStencilEnable] ? EnsureTarget(s.zs, true) : nullptr;
     // the zeta has a pitch of its own: a depth buffer wider than the target (Most Wanted's is the multisampled 1280x480
     // under its 640x480 frame) serves its top left corner; one smaller cannot
@@ -3337,12 +3491,13 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
                   su.data, depth_smaller ? "target" : "depth");
         full_scale_.insert(key);
         ReleaseTarget(targets_.find(key));
-        rt = EnsureTarget(s.rt, false);
+        rt = EnsureColor(s.rt, rows, sub_h);
         ds = EnsureTarget(s.zs, true);
         if (rt && ds && (rt->w > ds->w || rt->h > ds->h)) ds = nullptr;
     }
     if (!rt && !ds) return;
-    if (rt && LatchCpuWrite(*rt)) UploadTarget(*rt, s.rt);
+    // a frame's rows: the CPU's pixels are the frame's, its own upload
+    if (rt && !sub_h && LatchCpuWrite(*rt)) UploadTarget(*rt, s.rt);
     draw_rt_ = rt;
     draw_ds_ = ds;
 
@@ -3395,7 +3550,7 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
     VkDeviceSize need = 2 * kUboRange + 1024;
     for (uint32_t i = 0; i < a.buffer_count; i++) need += a.buffers[i].bytes + 16;
     need += VkDeviceSize(a.index_count) * 4 + 16;
-    if (need < kUploadSize / 4 && CurrentFrame().used + need > kUploadSize) Submit(true, false);
+    if (need < kUploadSize / 4 && CurrentFrame().used + need > kUploadSize && !Submit(true, false)) return;
     GuestExtent size;
     SurfaceSize(draw_rt_ ? s.rt : s.zs, size.w, size.h);
     DrawConstants c{};
@@ -3417,6 +3572,7 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
         vc = last_vc_;
     } else {
         vc = Constants(s.vsc.data(), sizeof(s.vsc));
+        if (!vc.cpu) return;
         if (g_vsc_counted) last_vsc_changes_ = g_vsc_changes;
         else std::memcpy(last_vsc_.data(), s.vsc.data(), sizeof(s.vsc));
         last_vc_ = vc;
@@ -3424,11 +3580,13 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
         last_vc_epoch_ = upload_epoch_;
     }
     Alloc dc = Constants(&c, sizeof(c));
+    if (!dc.cpu) return;
     VkBuffer vbufs[16];
     VkDeviceSize voffs[16];
     for (uint32_t i = 0; i < a.buffer_count; i++) {
         const VertexBuffer& b = a.buffers[i];
         Alloc v = Upload(std::max<uint32_t>(b.bytes, 4), 16);
+        if (!v.cpu) return;
         if (b.src && b.bytes) std::memcpy(v.cpu, b.src, b.bytes);
         vbufs[i] = v.buf;
         voffs[i] = v.off;
@@ -3437,6 +3595,7 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
     if (a.index_count) {
         uint32_t ibytes = a.index_count * (a.index16 ? 2 : 4);
         ib = Upload(ibytes, 4);
+        if (!ib.cpu) return;
         std::memcpy(ib.cpu, a.index_src, ibytes);
     }
     bool clamp = AnyStageWraps(s) && UnitTexcoords(a);
@@ -3452,8 +3611,11 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
     BindSet(set, vc.off, dc.off);
     Target& bt = draw_rt_ ? *draw_rt_ : *draw_ds_;
     float W = float(bt.w), H = float(bt.h);
-    SetViewport(0, 0, W, H);
     float sc = W / size.w;
+    // a frame's rows (FrameRegion): the surface's picture goes on them, clipped to them
+    bool sub = draw_rt_ && sub_h;
+    float oy = sub ? rows * sc : 0.0f;
+    SetViewport(0, oy, W, sub ? sub_h * sc : H);
     int32_t x0 = int32_t(s.viewport.x * sc), y0 = int32_t(s.viewport.y * sc);
     int32_t x1 = int32_t((s.viewport.x + s.viewport.w) * sc), y1 = int32_t((s.viewport.y + s.viewport.h) * sc);
     if (s.scissor_count) {
@@ -3461,6 +3623,10 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
         y0 = std::max(y0, int32_t(s.scissors[1] * sc));
         x1 = std::min(x1, int32_t(s.scissors[2] * sc));
         y1 = std::min(y1, int32_t(s.scissors[3] * sc));
+    }
+    if (sub) {
+        y0 = std::max(y0, 0) + int32_t(oy);
+        y1 = std::min(y1 + int32_t(oy), int32_t(oy + sub_h * sc));
     }
     SetScissor(std::clamp(x0, 0, int32_t(W)), std::clamp(y0, 0, int32_t(H)), std::clamp(x1, 0, int32_t(W)),
                std::clamp(y1, 0, int32_t(H)));
@@ -3485,20 +3651,26 @@ VkRect2D ScaledRect(const Target& t, int x0, int y0, int x1, int y1) {
 }
 
 void VulkanBackend::ClearTarget(Target& t, const State& s, uint32_t count, const uint8_t* rects, uint32_t flags,
-                                uint32_t color, float z, uint32_t stencil) {
+                                uint32_t color, float z, uint32_t stencil, uint32_t rows, uint32_t sub_h) {
     std::vector<VkClearRect> rs;
-    auto add = [&](const VkRect2D& r) {
+    // a frame's rows (FrameRegion): the surface's rects moved onto them, clipped to them
+    auto add = [&](int x0, int y0, int x1, int y1) {
+        if (sub_h) {
+            y0 = std::max(y0, 0) + int(rows);
+            y1 = std::min(y1, int(sub_h)) + int(rows);
+        }
+        VkRect2D r = ScaledRect(t, x0, y0, x1, y1);
         if (r.extent.width && r.extent.height) rs.push_back({r, 0, 1});
     };
     if (count && rects) {
         for (uint32_t i = 0; i < count; i++) {
             int32_t r[4];
             std::memcpy(r, rects + size_t(i) * sizeof(r), sizeof(r));
-            add(ScaledRect(t, r[0], r[1], r[2], r[3]));
+            add(r[0], r[1], r[2], r[3]);
         }
     } else {
         const auto& v = s.viewport;
-        add(ScaledRect(t, int(v.x), int(v.y), int(v.x + v.w), int(v.y + v.h)));
+        add(int(v.x), int(v.y), int(v.x + v.w), int(v.y + v.h));
     }
     t.drawn = true, t.writes++;
     if (rs.empty()) return;
@@ -3510,7 +3682,7 @@ void VulkanBackend::ClearTarget(Target& t, const State& s, uint32_t count, const
         ca.clearValue.depthStencil = {std::clamp(z, 0.0f, 1.0f), stencil & 0xFF};
     } else {
         // pixels the CPU wrote before this clear go in first, a later upload would paint over the clear
-        if (LatchCpuWrite(t)) UploadTarget(t, s.rt);
+        if (!sub_h && LatchCpuWrite(t)) UploadTarget(t, s.rt);
         ca.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         Color(color, ca.clearValue.color.float32);
     }
@@ -3537,14 +3709,17 @@ void VulkanBackend::ClearTarget(Target& t, const State& s, uint32_t count, const
 
 void VulkanBackend::Clear(const State& s, uint32_t count, const uint8_t* rects, uint32_t flags, uint32_t color,
                           float z, uint32_t stencil) {
-    Target* rt = (flags & kClearTarget) ? EnsureTarget(s.rt, false) : nullptr;
+    if (gpu_failed_) return;
+    uint32_t rows = 0, sub_h = 0;
+    Target* rt = (flags & kClearTarget) ? EnsureColor(s.rt, rows, sub_h) : nullptr;
     Target* ds = (flags & (kClearZ | kClearStencil)) ? EnsureTarget(s.zs, true) : nullptr;
-    for (Target* t : {rt, ds})
-        if (t) ClearTarget(*t, s, count, rects, flags, color, z, stencil);
+    if (rt) ClearTarget(*rt, s, count, rects, flags, color, z, stencil, rows, sub_h);
+    if (ds) ClearTarget(*ds, s, count, rects, flags, color, z, stencil);
 }
 
 void VulkanBackend::Copy(const Surface& src, const Surface& dst, uint32_t count, uint32_t src_rects,
                          uint32_t dst_points) {
+    if (gpu_failed_) return;
     Target* src_t = FindTarget(src, false);
     // pixels the CPU made: the copy happens in memory, textures and targets pick it up from there
     if (!src_t || !src_t->drawn) {
@@ -3619,6 +3794,7 @@ void VulkanBackend::Copy(const Surface& src, const Surface& dst, uint32_t count,
 // ---- read-backs
 
 void VulkanBackend::Sync(uint32_t data, uint32_t) {
+    if (gpu_failed_) return;
     auto it = targets_.find(TargetMapKey(data, false));
     if (it == targets_.end() || !it->second.drawn) return;
     Target& t = it->second;
@@ -3626,7 +3802,7 @@ void VulkanBackend::Sync(uint32_t data, uint32_t) {
     Image* src = CopySource(t, down);
     std::vector<uint8_t> px;
     bool ok = src && ReadBack(*src, t.gw, t.gh, px);
-    Destroy(down);  // ReadBack waited for the GPU
+    Retire(down);  // kept until its recorded use has safely finished
     if (!ok) return;
     uint32_t pitch = GuestPitch(t.gw);
     uint8_t* guest = static_cast<uint8_t*>(kernel::HostPtr(data));
@@ -3637,11 +3813,13 @@ void VulkanBackend::Sync(uint32_t data, uint32_t) {
 }
 
 void VulkanBackend::SyncLate(uint32_t data) {
+    if (gpu_failed_) return;
     if (!DeliverLate(data)) Sync(data, 0);
     RecordLate(data);
 }
 
 bool VulkanBackend::DeliverLate(uint32_t data) {
+    if (gpu_failed_) return false;
     std::lock_guard lock(late_lock_);
     auto it = late_.find(data);
     if (it == late_.end()) return false;
@@ -3665,6 +3843,7 @@ bool VulkanBackend::DeliverLate(uint32_t data) {
 }
 
 void VulkanBackend::RecordLate(uint32_t data) {
+    if (gpu_failed_) return;
     auto it = targets_.find(TargetMapKey(data, false));
     if (it == targets_.end()) return;
     Target& t = it->second;
@@ -3764,6 +3943,7 @@ void VulkanBackend::DrawFrame(Target* t, uint32_t index) {
         if (aa == game::kAaSsaa) c[6] = std::clamp(std::round(float(t->h) / std::max(vh, 1.0f)), 1.0f, 4.0f);
     }
     Alloc cbuf = Constants(c, sizeof(c));
+    if (!cbuf.cpu) return;
     VkPipeline pipe = t ? FullScreenPipeline(post ? kPresentHlsl : kBlitHlsl, "psmain", swap_fmt_, VK_FORMAT_UNDEFINED, false)
                         : VK_NULL_HANDLE;
     VkDescriptorSet set = VK_NULL_HANDLE;
@@ -3831,8 +4011,10 @@ void VulkanBackend::RenderUi() {
 }
 
 void VulkanBackend::UploadGammaRamp() {
+    if (gpu_failed_) return;
     ramp_dirty_ = false;
     Alloc a = Upload(256 * 4, 16);
+    if (!a.cpu) return;
     bool identity = true;
     for (int i = 0; i < 256; i++) {
         uint8_t* p = a.cpu + i * 4;
@@ -3884,9 +4066,10 @@ void VulkanBackend::ReleaseOldTextures() {
 }
 
 void VulkanBackend::ApplySettings() {
+    if (gpu_failed_) return;
     float want = app::RenderScale(guest_h_);
     if (std::fabs(want - scale_) <= 1e-4f) return;
-    Submit(true, false);
+    if (!Submit(true, false)) return;
     for (auto& [key, t] : targets_) {
         Retire(t.img);
         Retire(t.fb);
@@ -3894,6 +4077,8 @@ void VulkanBackend::ApplySettings() {
     targets_.clear();
     for (auto& [data, c] : cubes_) Retire(c.img);
     cubes_.clear();
+    for (auto& [data, im] : regions_) Retire(im);
+    regions_.clear();
     full_scale_.clear();
     draw_rt_ = draw_ds_ = nullptr;
     scale_ = want;
@@ -3917,9 +4102,15 @@ void VulkanBackend::SavePipelineCache() {
 }
 
 void VulkanBackend::Present(const Surface& front) {
+    if (gpu_failed_) return;
     Target* t = EnsureTarget(front, false);
+    if (t && std::find(std::begin(presented_), std::end(presented_), t->data) == std::end(presented_)) {
+        std::move_backward(std::begin(presented_), std::end(presented_) - 1, std::end(presented_));
+        presented_[0] = t->data;
+    }
     if (t && LatchCpuWrite(*t)) UploadTarget(*t, front);
     if (ramp_dirty_) UploadGammaRamp();
+    if (gpu_failed_) return;
     uint32_t index = 0;
     auto at = std::chrono::steady_clock::now();
     bool shown = AcquireImage(index);
@@ -3928,16 +4119,17 @@ void VulkanBackend::Present(const Surface& front) {
         present_index_ = index;
         DrawFrame(t, index);
     }
+    if (gpu_failed_) return;
     bool timed = pass_log_ && pass_times_ && pass_stamps_;
     if (timed) vkCmdWriteTimestamp(Cb(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, pass_times_, pass_stamps_++);
-    Submit(false, shown);
+    if (!Submit(false, shown)) return;
     if (timeline_ok_) QueuePoolReset(CurrentFrame());
     present_value_[presents_ % (kFrames + 1)].store(value_);
     if (pass_log_) {
         // a stall every ten seconds, for the diagnostic only
         std::string out;
         std::vector<uint64_t> t(pass_stamps_);
-        WaitValue(value_);
+        if (!WaitValue(value_)) return;
         if (timed && vkGetQueryPoolResults(dev_, pass_times_, 0, pass_stamps_, t.size() * 8, t.data(), 8,
                                            VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
             uint64_t mask = time_bits_ >= 64 ? ~0ull : (1ull << time_bits_) - 1;
@@ -3968,11 +4160,20 @@ void VulkanBackend::Present(const Surface& front) {
     frame_++;
     Frame& next = CurrentFrame();
     auto wt = std::chrono::steady_clock::now();
-    ResetFrame(next);
-    if (timeline_ok_) AwaitPoolReset(next);
-    else vkResetCommandPool(dev_, next.pool, 0);
+    if (!ResetFrame(next)) return;
+    if (timeline_ok_) {
+        AwaitPoolReset(next);
+        if (gpu_failed_) return;
+    } else {
+        VkResult reset = vkResetCommandPool(dev_, next.pool, 0);
+        if (reset != VK_SUCCESS) {
+            FailGpu("vkResetCommandPool", reset, next.value);
+            return;
+        }
+    }
     g_perf.frame_wait_ns += SinceNs(wt);
     Begin();
+    if (gpu_failed_) return;
     if (pass_log_) {
         if (!pass_times_) {
             VkQueryPoolCreateInfo qi{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
@@ -3999,7 +4200,9 @@ void VulkanBackend::Present(const Surface& front) {
 }
 
 // the slot is not reused before the caller's wait: the title runs at most one present ahead
-void VulkanBackend::WaitGpuFrame(uint64_t n) { WaitValue(present_value_[n % (kFrames + 1)].load()); }
+void VulkanBackend::WaitGpuFrame(uint64_t n) {
+    if (!gpu_failed_) WaitValue(present_value_[n % (kFrames + 1)].load());
+}
 
 VulkanBackend* g_vulkan = nullptr;
 

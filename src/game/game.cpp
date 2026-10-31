@@ -6,6 +6,7 @@
 
 #include "common/aspect.h"
 #include "common/options.h"
+#include "core/log.h"
 #include "cpu/x86_ops.h"
 #include "kernel/kernel.h"
 #include "kernel/memory.h"
@@ -84,10 +85,14 @@ uint32_t TargetData(uint32_t target) {
 }
 void ApplyGraphicsSwitches() {
     // HALF and QUARTER draw the cube every 2nd or 4th frame; between, the cars read the faces drawn last. OFF still
-    // draws it every 512th: a cube never drawn leaves the paint white, whatever native/vulkan.cpp binds for it
-    static uint32_t frame = 0;
+    // draws it every 512th: a cube never drawn leaves the paint white, whatever native/vulkan.cpp binds for it. Out of a
+    // race and in its first frames it is drawn every frame: a race's cube is new, and its cars stayed white until the
+    // count came round
+    constexpr uint32_t kRaceWarmup = 120;
+    static uint32_t frame = 0, racing = 0;
+    racing = Racing() ? racing + (racing < kRaceWarmup) : 0;
     uint32_t rate = Opt().reflections;
-    uint32_t every = rate < 3 ? 1u << rate : 512;
+    uint32_t every = racing < kRaceWarmup ? 1 : rate < 3 ? 1u << rate : 512;
     bool envmap = frame++ % every == 0;
     kernel::G<uint8_t>(kEnvMapSwitch) = envmap ? 1 : 0;
     kernel::G<uint8_t>(kParticleDrawSwitch) = Opt().particles ? 1 : 0;
@@ -181,6 +186,31 @@ void SkipMovie(X86Context& ctx, uint32_t allow_flag) {
     kernel::W32(ctx.esp + 4, kMsgPadAccept);
 }
 void ForgetMovie(uint32_t screen) { g_movie_ticks.erase(screen); }
+
+// The touch controls' RESET: the player's car put back on the road, as when it falls off the world. EResetPlayerCar
+// does it (0x1B3640): the first player ([0x49550C], the count at 0x495514), its object's ([player + 4]) IResetable
+// (found by 0x169A80, the interface 0x19AFC0; ResetCar's at +0x50), whose ResetVehicle (vtable +8, 0x1FF390, thiscall)
+// takes the last place on the road ResetCar kept. The event passes false; true first asks whether a reset is allowed
+constexpr uint32_t kPlayers = 0x49550C, kPlayerCount = 0x495514, kFindInterface = 0x169A80, kIResetable = 0x19AFC0;
+constexpr uint32_t kResetVehicle = 8;
+void ResetCarFrame(X86Context& ctx) {
+    if (!g_reset_car.exchange(false) || !Racing()) return;
+    struct Restore {
+        X86Context& destination;
+        X86Context saved;
+        ~Restore() { destination = saved; }
+    } restore{ctx, ctx};
+    uint32_t list = kernel::R32(kPlayers);
+    uint32_t player = kernel::R32(kPlayerCount) && list ? kernel::R32(list) : 0;
+    uint32_t object = player ? kernel::R32(player + 4) : 0;
+    if (!object) return;
+    ctx.ecx = object;
+    uint32_t resetable = kernel::CallGuest(ctx, kFindInterface, {kIResetable});
+    if (!resetable) return;
+    ctx.ecx = resetable;
+    uint32_t done = kernel::CallGuest(ctx, kernel::R32(kernel::R32(resetable) + kResetVehicle), {0}) & 0xFF;
+    LOGI("reset car: %s", done ? "done" : "no place kept");
+}
 
 // only English and Indonesian are offered; Indonesian plays the English table, translated (prompts.cpp)
 bool LanguageAvailable(const std::string& code) { return code == "int" || code == "ind"; }
