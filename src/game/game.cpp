@@ -1,5 +1,7 @@
 // Need for Speed: Most Wanted (Black Edition) needs no patch of its code to boot: the XDK it calls is all on the host.
 // Its own hooks go here, [[hook]] entries in config/game.toml and X86_FUNC replacements of recompiled functions.
+#include <atomic>
+#include <chrono>
 #include <cstring>
 #include <string>
 #include <unordered_map>
@@ -291,6 +293,149 @@ X86_FUNC(sub_00087A40) {
     X86_PUSH32(0);
     sub_002BC40C(ctx, base);
     ctx.eax = result;
+}
+
+// AUTO SHIFT IN DRAG: the player's transmission (ITransmission, 0x11FB0, found as RESET finds IResetable) is
+// EngineDragster's (its interface at +0x50, vtable 0x3E3560) in a drag race. Its shift potential (+0x18C, the drag
+// HUD's shift state, 0x2108C0) stayed 0 through a whole race, and the HUD's update was not called in every race, so the
+// cheat watches the engine itself: the rpm (+0x184, IEngine's 0x1F3890) against the redline ([+0x150] + 0x58,
+// 0x1F38C0), the gear (+0x88: 0 reverse, 1 neutral, 2 first) and the clutch's state (+0x19C, 0 engaged), and shifts with
+// the transmission's own Shift (vtable +0xC, 0x1FDF50, thiscall, the gear; 0x1F3F70 checks it against the top gear).
+// Once a gear, again if the gear has not changed a while later. EngineDragster stays: the races' EngineRacer in its
+// place broke the drag race's sound as it loaded (0x8AC00 on a stream that was not there)
+namespace {
+constexpr uint32_t kITransmission = 0x11FB0, kDragTransmissionVtable = 0x3E3560, kTransmissionShift = 0xC;
+constexpr uint32_t kEngineFromTransmission = 0x50;
+constexpr uint32_t kEngineRpm = 0x184, kEngineInfo = 0x150, kInfoRedline = 0x58, kEngineGear = 0x88;
+constexpr uint32_t kEngineClutch = 0x19C;
+constexpr uint32_t kFirstGear = 2;
+constexpr float kShiftAt = 0.97f;  // of the redline: a perfect shift; sitting on it blows a drag car's engine
+constexpr uint64_t kShiftRetryMs = 600;
+
+uint64_t SteadyMs() {
+    using namespace std::chrono;
+    return uint64_t(duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
+}
+
+float GuestF32(uint32_t va) {
+    uint32_t v = kernel::R32(va);
+    float f;
+    std::memcpy(&f, &v, sizeof(f));
+    return f;
+}
+}  // namespace
+
+namespace game {
+void DragShiftFrame(X86Context& ctx) {
+    if (!Opt().cheat_drag_shift || !Racing()) return;
+    uint32_t list = kernel::R32(kPlayers);
+    uint32_t player = kernel::R32(kPlayerCount) && list ? kernel::R32(list) : 0;
+    uint32_t object = player ? kernel::R32(player + 4) : 0;
+    if (!object) return;
+    struct Restore {
+        X86Context& destination;
+        X86Context saved;
+        ~Restore() { destination = saved; }
+    } restore{ctx, ctx};
+    ctx.ecx = object;
+    uint32_t transmission = kernel::CallGuest(ctx, kFindInterface, {kITransmission});
+    if (!transmission || kernel::R32(transmission) != kDragTransmissionVtable) return;
+    uint32_t engine = transmission - kEngineFromTransmission;
+    uint32_t info = kernel::R32(engine + kEngineInfo);
+    if (!mem::IsCommitted(info + kInfoRedline)) return;
+    static uint32_t last_gear = ~0u;
+    static uint64_t sent_ms = 0;
+    uint32_t gear = kernel::R32(engine + kEngineGear);
+    float rpm = GuestF32(engine + kEngineRpm), redline = GuestF32(info + kInfoRedline);
+    uint64_t now = SteadyMs();
+    if (gear != last_gear) {
+        LOGI("drag shift: gear %u, rpm %.0f, redline %.0f", gear, rpm, redline);
+        last_gear = gear;
+        sent_ms = 0;
+    }
+    if (gear < kFirstGear || kernel::R32(engine + kEngineClutch) != 0) return;
+    if (!(redline > 0) || rpm < redline * kShiftAt) return;
+    if (sent_ms && now - sent_ms < kShiftRetryMs) return;
+    sent_ms = now;
+    ctx.ecx = transmission;
+    uint32_t done = kernel::CallGuest(ctx, kernel::R32(kDragTransmissionVtable + kTransmissionShift), {gear + 1}) & 0xFF;
+    LOGI("drag shift: up from gear %u, rpm %.0f: %s", gear, rpm, done ? "shifted" : "refused");
+}
+}  // namespace game
+
+// NO TRAFFIC: AITrafficManager's update (0x35A50, thiscall, the time step) spawns traffic only while the density
+// 0x22CC0 gives (cdecl, a float on the x87 stack) is above 0. The game gives 0 itself in a pursuit; with the cheat on
+// it is always 0. The cars already about (switched on in a race) are let go as the update lets go of the ones it no
+// longer keeps (0x35B41): each active car in its list (+0x94, a ring of nodes, the car at +8; IsActive vtable +0x88)
+// has its AI (vtable +0xAC) told to leave (vtable +0x8C)
+namespace {
+constexpr uint32_t kTrafficCars = 0x94, kNodeCar = 8;
+constexpr uint32_t kCarIsActive = 0x88, kCarAi = 0xAC, kAiLeave = 0x8C;
+uint32_t VCall(X86Context& ctx, uint32_t self, uint32_t slot) {
+    ctx.ecx = self;
+    return kernel::CallGuest(ctx, kernel::R32(kernel::R32(self) + slot), {});
+}
+}  // namespace
+
+X86_EXTERN_FUNC(__imp__sub_00022CC0);
+X86_FUNC(sub_00022CC0) {
+    __imp__sub_00022CC0(ctx, base);
+    if (game::Opt().cheat_no_traffic) X87_ST(0) = 0.0;
+}
+
+X86_EXTERN_FUNC(__imp__sub_00035A50);
+X86_FUNC(sub_00035A50) {
+    uint32_t manager = ctx.ecx;
+    __imp__sub_00035A50(ctx, base);
+    if (!game::Opt().cheat_no_traffic) return;
+    struct Restore {
+        X86Context& destination;
+        X86Context saved;
+        ~Restore() { destination = saved; }
+    } restore{ctx, ctx};
+    uint32_t head = kernel::R32(manager + kTrafficCars);
+    if (!head) return;
+    int released = 0;
+    for (uint32_t node = kernel::R32(head); node && node != head; node = kernel::R32(node)) {
+        uint32_t car = kernel::R32(node + kNodeCar);
+        if (!car || !(VCall(ctx, car, kCarIsActive) & 0xFF)) continue;
+        if (uint32_t ai = VCall(ctx, car, kCarAi)) {
+            VCall(ctx, ai, kAiLeave);
+            released++;
+        }
+    }
+    if (released) LOGI("no traffic: %d cars let go", released);
+}
+
+// The drag races' traffic is not the manager's: a script activity spawns it a car at a time as the race goes on
+// (0x181120, thiscall, no arguments, true once done; its state at +0x4C, 1 until the car is made). In state 1 it reads
+// the car's model from its attributes (+4, 0x490A0 with the key 0xF833C06F and 0, the string at the answer) and gives
+// the car traffic's AI, or a cop's for "copmidsize" (0x18117D). With the cheat on a car that is not a cop is never
+// made: the activity stays in state 1, which the race does not wait on (its cars came seconds into the race)
+namespace {
+constexpr uint32_t kSpawnState = 0x4C, kSpawnAttributes = 4, kAttribute = 0x490A0, kModelKey = 0xF833C06F;
+constexpr uint8_t kSpawnMaking = 1;
+}  // namespace
+
+X86_EXTERN_FUNC(__imp__sub_00181120);
+X86_FUNC(sub_00181120) {
+    uint32_t spawner = ctx.ecx;
+    uint8_t state = *static_cast<const uint8_t*>(kernel::HostPtr(spawner + kSpawnState));
+    if (game::Opt().cheat_no_traffic && state == kSpawnMaking) {
+        X86Context saved = ctx;
+        ctx.ecx = spawner + kSpawnAttributes;
+        uint32_t model = kernel::CallGuest(ctx, kAttribute, {kModelKey, 0});
+        ctx = saved;
+        const char* name = model && mem::IsCommitted(model) && kernel::R32(model)
+                               ? static_cast<const char*>(kernel::HostPtr(kernel::R32(model)))
+                               : nullptr;
+        if (name && std::strcmp(name, "copmidsize") != 0) {
+            ctx.eax = 0;
+            ctx.esp += 4;
+            return;
+        }
+    }
+    __imp__sub_00181120(ctx, base);
 }
 
 X86_EXTERN_FUNC(__imp__sub_00116230);
