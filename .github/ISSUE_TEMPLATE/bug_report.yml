@@ -104,8 +104,14 @@ body:
     attributes:
       label: Log
       description: |
-        Attach `mostwanted.log` from `MostWanted/logs` on the phone's storage (`Android/data/com.racas.mostwanted/files/logs` without all files access; drag it here), or paste its contents.
-      render: text
+        Attach the log by dragging the file here. Open the game once more after the bug so the log is complete. The logs are in:
+        - **`MostWanted/logs`** at the top of the phone's storage (`/storage/emulated/0/MostWanted/logs`), or
+        - `Android/data/com.racas.mostwanted/files/logs` if you didn't allow all files access.
+
+        Attach **`mostwanted.log`**. If the game closed by itself, also attach the newest **`crash_<date>.txt`** from the same folder (it is written the next time you open the game).
+      placeholder: Drag mostwanted.log (and crash_<date>.txt if the game closed) here.
+    validations:
+      required: true
 
   - type: textarea
     id: settings
