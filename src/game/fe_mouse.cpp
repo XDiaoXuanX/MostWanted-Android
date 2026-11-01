@@ -21,6 +21,7 @@
 #include "common/aspect.h"
 #include "common/fe_mouse.h"
 #include "common/options.h"
+#include "common/translations.h"
 #include "cpu/x86_context.h"
 #include "kernel/kernel.h"
 #include "kernel/memory.h"
@@ -145,12 +146,14 @@ constexpr uint32_t kButtonObject = 1u << 28;
 constexpr uint32_t kSetCurrentButton = 0x15CB30;
 constexpr int kMaxKeys = 2000;  // the package's objects, both of its pages
 
-bool KeyboardPackage(uint32_t p) {
+// the package's name (Keyboard.fng, Pause_Performance_Tuning.fng) begins with prefix
+bool PackageNamed(uint32_t p, std::string_view prefix) {
     uint32_t name = Peek(p + kPackageName);
-    char head[8] = {};
-    for (uint32_t i = 0; name && i < 8 && mem::IsCommitted(name + i); i++) head[i] = char(kernel::G<uint8_t>(name + i));
-    return std::memcmp(head, "Keyboard", 8) == 0;
+    for (uint32_t i = 0; i < prefix.size(); i++)
+        if (!name || !mem::IsCommitted(name + i) || char(kernel::G<uint8_t>(name + i)) != prefix[i]) return false;
+    return true;
 }
+bool KeyboardPackage(uint32_t p) { return PackageNamed(p, "Keyboard"); }
 
 // The keys are in groups, which FEngTestForIntersection leaves out (it tests an object's own place, in its group's
 // units): a key is tested as drawn, by its cached render object's (+0x58) transform in the front end's 640x480 (its
@@ -299,6 +302,14 @@ void FeFrame() {
     if (menu && KeyboardPackage(menu)) {
         for (int i = 2; i < kFePromptCount; i++) prompts.shown[i] = false;  // A and B stay, ENTER and CLOSE
         prompts.right_stick = false;
+    }
+    // the pause menu's PERFORMANCE TUNING: L and R flank the setting's name ("Setting 1") and step through the three
+    // settings. The scan took that name for L's label and found none for R, and its numbers made the touch triggers
+    // the map's zoom; they are the settings' steps
+    if (menu && PackageNamed(menu, "Pause_Performance_Tuning")) {
+        prompts.shown[kFePromptLT] = prompts.shown[kFePromptRT] = true;
+        prompts.label[kFePromptLT] = app::Ui("PREV");
+        prompts.label[kFePromptRT] = app::Ui("NEXT");
     }
     g_package = menu;
     g_menu = menu != 0;

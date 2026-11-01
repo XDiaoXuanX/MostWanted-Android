@@ -180,6 +180,8 @@ constexpr Entry kEntries[] = {
     // a menu's A and B pills over the touch controls
     {"ENTER", {{}, {}, {}, {}, u"Pilih"}},
     {"CLOSE", {{}, {}, {}, {}, u"Tutup"}},
+    {"PREV", {{}, {}, {}, {}, u"Mundur"}},
+    {"NEXT", {{}, {}, {}, {}, u"Maju"}},
 
     // the message boxes before the game runs (native/). Whole sentences need every language: one with no text in
     // a language would have its words swapped one by one ("GAME", "ON", ...)
