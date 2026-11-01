@@ -173,6 +173,9 @@ constexpr Entry kEntries[] = {
     {"HIDE", {{}, {}, {}, {}, u"Sembunyikan"}},
     {"SHOW", {{}, {}, {}, {}, u"Tampilkan"}},
     {"DONE", {{}, {}, {}, {}, u"Selesai"}},
+    {"MENUS", {{}, {}, {}, {}, u"Menu"}},
+    {"RACE", {{}, {}, {}, {}, u"Balapan"}},
+    {"MENU CONTROLS: DRAG TO MOVE, PINCH OR - + TO RESIZE", {{}, {}, {}, {}, u"Kontrol menu: seret untuk memindah, cubit atau - + untuk mengubah ukuran"}},
 
     // a menu's A and B pills over the touch controls
     {"ENTER", {{}, {}, {}, {}, u"Pilih"}},
