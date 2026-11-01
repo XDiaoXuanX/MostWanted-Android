@@ -24,9 +24,9 @@ on:
         type: string
         default: ""
       applicationId:
-        description: "Custom applicationId, e.g. com.mostwanted.unofficial (empty: keep the one in build.gradle)"
+        description: "Custom applicationId, e.g. com.racas.mostwanted (empty: keep the one in build.gradle)"
         required: false
-        default: "com.mostwanted.unofficial"
+        default: "com.racas.mostwanted"
         type: choice
         options:
           - com.mostwanted.unofficial
@@ -77,8 +77,8 @@ jobs:
             echo "::error::app/build.gradle or app/build.gradle.kts not found"
             exit 1
           fi
-          sed -i -E "s|applicationId([[:space:]]*=[[:space:]]*)[\"']com\.mostwanted\.unofficial[\"']|applicationId\\1\"$APP_ID\"|g" "$gradle_file"
-          sed -i -E "s|applicationId([[:space:]]+)[\"']com\.mostwanted\.unofficial[\"']|applicationId\\1\"$APP_ID\"|g" "$gradle_file"
+          sed -i -E "s|applicationId([[:space:]]*=[[:space:]]*)[\"']com\.racas\.mostwanted[\"']|applicationId\\1\"$APP_ID\"|g" "$gradle_file"
+          sed -i -E "s|applicationId([[:space:]]+)[\"']com\.racas\.mostwanted[\"']|applicationId\\1\"$APP_ID\"|g" "$gradle_file"
           if ! grep -q "applicationId.*[\"']$APP_ID[\"']" "$gradle_file"; then
             echo "::error::Failed to patch applicationId in $gradle_file"
             grep -n "applicationId" "$gradle_file" || true
