@@ -48,6 +48,8 @@ struct Options {
     bool cheat_cash = false;          // the career's cash kept at kCheatCash
     bool cheat_no_police = false;     // no new cops or pursuits
     bool cheat_unlock_all = false;    // every car, part and race unlocked
+    bool cheat_no_traffic = false;    // no traffic cars, src/game/game.cpp
+    bool cheat_drag_shift = false;    // the gears shift by themselves in drag races, from the next race
     bool skip_movies = false;         // the movies end as they start, src/game/game.cpp
     uint32_t audio_output = 0;  // audio::kOutputAuto, kOutputStereo, kOutputSurround or kOutputMono
     std::string language = "int";  // one of kLanguages
@@ -69,5 +71,6 @@ void ApplyCheats();            // src/game/game.cpp: game thread, at each presen
 bool Racing();    // src/game/game.cpp, any thread: the game flow is in a race (free roam too), not loading or the front end
 inline std::atomic<bool> g_reset_car{false};  // native/touch.cpp's RESET, taken by ResetCarFrame
 void ResetCarFrame(X86Context& ctx);          // src/game/game.cpp: game thread, at each present
+void DragShiftFrame(X86Context& ctx);   // src/game/game.cpp: game thread, at each present
 
 }  // namespace game

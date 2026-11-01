@@ -110,6 +110,8 @@ const app::GameInfo app::kGame = {
                 {"cheat_cash", &game::Opt().cheat_cash, nullptr},
                 {"cheat_no_police", &game::Opt().cheat_no_police, nullptr},
                 {"cheat_unlock_all", &game::Opt().cheat_unlock_all, nullptr},
+                {"cheat_drag_shift", &game::Opt().cheat_drag_shift, nullptr},
+                {"cheat_no_traffic", &game::Opt().cheat_no_traffic, nullptr},
                 {"skip_movies", &game::Opt().skip_movies, nullptr},
                 {"fps_usage", &game::Opt().fps_usage, nullptr},
                 {"fps_temps", &game::Opt().fps_temps, nullptr},
