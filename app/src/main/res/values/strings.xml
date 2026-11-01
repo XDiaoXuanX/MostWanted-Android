@@ -28,7 +28,7 @@
 
     <!-- where the game goes -->
     <string name="storage_access">Storage access</string>
-    <string name="storage_text">Most Wanted reads the game from the MostWanted folder on your phone\'s storage:\n\n%1$s\n\n%2$s</string>
+    <string name="storage_text">Most Wanted reads the game from the MostWanted folder on your phone\'s storage, and writes its logs and crash reports there:\n\n%1$s\n\n%2$s</string>
     <string name="storage_all_files">On the next screen turn on \"Allow access to manage all files\" for Most Wanted, then come back.</string>
     <string name="storage_permission">Allow Most Wanted to access your storage on the next screen.</string>
     <string name="allow_access">Allow access</string>

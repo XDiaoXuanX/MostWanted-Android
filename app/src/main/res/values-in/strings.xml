@@ -23,7 +23,7 @@
 
     <!-- where the game goes -->
     <string name="storage_access">Akses penyimpanan</string>
-    <string name="storage_text">Most Wanted membaca game dari folder MostWanted di penyimpanan HP kamu:\n\n%1$s\n\n%2$s</string>
+    <string name="storage_text">Most Wanted membaca game dari folder MostWanted di penyimpanan HP kamu, dan menulis log serta laporan crash di sana:\n\n%1$s\n\n%2$s</string>
     <string name="storage_all_files">Di layar berikutnya, aktifkan \"Izinkan akses untuk mengelola semua file\" untuk Most Wanted, lalu kembali ke sini.</string>
     <string name="storage_permission">Di layar berikutnya, izinkan Most Wanted mengakses penyimpanan kamu.</string>
     <string name="allow_access">Izinkan akses</string>
