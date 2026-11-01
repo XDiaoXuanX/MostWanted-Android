@@ -1,4 +1,6 @@
 # Need for Speed: Most Wanted for Android
+**English** | [Bahasa Indonesia](README.id.md)
+
 An unofficial native Android port of the original Xbox version of *Need for Speed: Most Wanted* (Black Edition), with touch controls, controller and keyboard support and extended graphics options.
 
 The game's x86 code is statically recompiled ahead of time to C++ with [XboxXBE-Recomp](https://github.com/TGP482/XboxXBE-Recomp), then built for arm64. Drawing goes through Vulkan, and windowing, input and audio through SDL3. No emulator is involved. The Android host (Vulkan renderer, DirectSound, touch controls, settings panel) comes from [Black-Android](https://github.com/RanggaCasper/Black-Android), as [ShaolinMonks-Android](https://github.com/RanggaCasper/ShaolinMonks-Android) carries it.
@@ -21,12 +23,10 @@ The game's x86 code is statically recompiled ahead of time to C++ with [XboxXBE-
 
 ## Installation
 1. Install the APK.
-2. Open **Most Wanted** and allow **all files access** when it asks (on Android 10, the **storage** permission).
+2. Open **Most Wanted** and allow **all files access** when it asks (on Android 10, the **storage** permission). It is required: the game doesn't start without it.
 3. Copy the game into `/storage/emulated/0/MostWanted`, or into a `MostWanted` folder at the top of your SD card: either the disc image (`.iso`) or `default.xbe` with the disc's `NFS` folder beside it. The app creates the folder on the phone's storage once access is allowed, and starts the game as soon as it finds the files.
 
-If you don't grant that access, `Android/data/com.racas.mostwanted/files/assets` works too.
-
-Settings (`mostwanted.toml`, `android.toml`, `layout.toml`), saves (`hdd`) and the shader cache are stored in `Android/data/com.racas.mostwanted/files`. Logs go in `/storage/emulated/0/MostWanted/logs` (in `Android/data/com.racas.mostwanted/files/logs` without all files access).
+Saves go in `/storage/emulated/0/MostWanted/hdd` and logs in `/storage/emulated/0/MostWanted/logs`, so they stay if the app is uninstalled. Updating from a version that kept the saves in `Android/data/com.racas.mostwanted/files/hdd` copies them there on the first start; the old copy is left as it was. Settings (`mostwanted.toml`, `android.toml`, `layout.toml`) and the shader cache stay in `Android/data/com.racas.mostwanted/files`.
 
 The supported disc is the USA Black Edition (`default.xbe` SHA-1 `f636a16af04171089f879a4bed646e185c734233`).
 
@@ -60,10 +60,11 @@ Tested on a Xiaomi Pad 7 (Snapdragon 7+ Gen 3): boot, the menus, the career intr
 - `xbe_symbols` finds 165 of the 238 XDK functions the host knows and all 12 data symbols; the others are not linked into this image. Eleven more were resolved by hand in `config/game.toml`.
 - Most Wanted runs many of its vertex programs from the GPU's program memory (`LoadVertexShaderProgram` and `SelectVertexShaderDirect`), pushes its vertex constants inline, sets its pixel combiners with render states and gives its own frame and depth buffers; the host handles each.
 - Visibility tests (the sun's glare) are not counted yet: the glare stays off.
-- Known: a story film (after the first race) has been seen to stop on its first picture; a rare crash in the game's own code has been seen twice.
-- Nothing game-specific is patched yet: no frame rate unlock or cheats.
+- Game-specific work so far: the settings live in the game's own OPTIONS menu (ANDROID OPTIONS, in the main menu and the pause menu); quality switches for car and road reflections, shadows, particles, rain, screen raindrops, the yellow tint and motion blur; widescreen (Hor+) for any screen shape; SKIP MOVIES; menus by touch; a HUD layout editor; a RESET button that puts the car back on the road; and cheats (infinite nitrous and speedbreaker, max cash, no police, unlock all) on the gear's panel.
+- Fixed in the next release: the game crashed as a movie started or stopped (at boot, after a race), on phones with several cores. EA's stream reader read data the stream thread was still writing.
+- Known: a story film (after the first race) has been seen to stop on its first picture. The engine's own cutscenes (rival intros, the career's opening) can't be skipped yet.
 
-Logs are in `/storage/emulated/0/MostWanted/logs` (or `Android/data/com.racas.mostwanted/files/logs` without all files access). Please include the log when reporting a problem.
+Logs are in `/storage/emulated/0/MostWanted/logs`. On Android 11 and newer, a crash is written there as `crash_<date>.txt` the next time you open the game. Please include `mostwanted.log`, and the crash file if there is one, when reporting a problem.
 
 ## System Requirements
 - **Android** 10 or newer, arm64.
