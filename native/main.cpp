@@ -303,9 +303,64 @@ void InitUi() {
     touch::LoadArt();
 }
 
+// the MostWanted folder can be written: all files access (Android 10: the storage permission) is granted
+bool SharedWritable() {
+    std::filesystem::path probe = std::filesystem::path(host::kShared) / ".write";
+    std::error_code ec;
+    std::filesystem::create_directories(host::kShared, ec);
+    std::FILE* f = std::fopen(probe.c_str(), "w");
+    if (!f) return false;
+    std::fclose(f);
+    std::filesystem::remove(probe, ec);
+    return true;
+}
+
+// The game, its saves and its logs are in the MostWanted folder, so nothing starts without the access to it: the
+// activity asks for it (and asks again each time the app comes back without it), this waits, keeping SDL's events
+// moving; the player leaves for the settings page and comes back meanwhile
+void WaitForSharedAccess() {
+    bool logged = false;
+    while (!SharedWritable()) {
+        if (!logged) {
+            __android_log_print(ANDROID_LOG_WARN, "BLACK", "app: no access to %s yet, waiting for it", host::kShared);
+            logged = true;
+        }
+        SDL_Event e;
+        while (SDL_PollEvent(&e)) {
+            if (e.type == SDL_EVENT_QUIT || e.type == SDL_EVENT_TERMINATING) std::_Exit(0);
+            if (e.type == SDL_EVENT_WILL_ENTER_BACKGROUND) SetForeground(false);
+            if (e.type == SDL_EVENT_DID_ENTER_FOREGROUND) SetForeground(true);
+        }
+        SDL_Delay(200);
+    }
+}
+
+// The saves (the console's hard disk) in the MostWanted folder beside the game, where the player can reach, back up
+// and move them; versions before kept them in the app's own folder, which Android deletes with the app. Those are
+// copied over once, into a folder of their own first so a copy cut short is not taken for the saves; the old ones stay
+// where they were. A copy that fails keeps the game on the old ones
+std::filesystem::path HddDir() {
+    namespace fs = std::filesystem;
+    fs::path shared = fs::path(host::kShared) / "hdd", old = app::ExeDir() / "hdd";
+    std::error_code ec;
+    if (fs::exists(shared, ec) || !fs::is_directory(old, ec)) return shared;
+    fs::path copy = fs::path(host::kShared) / "hdd.copying";
+    fs::remove_all(copy, ec);
+    ec.clear();
+    fs::copy(old, copy, fs::copy_options::recursive, ec);
+    if (!ec) fs::rename(copy, shared, ec);
+    if (ec) {
+        LOGE("app: the saves in %s could not be copied to %s: %s; playing on them where they are", old.c_str(),
+             shared.c_str(), ec.message().c_str());
+        fs::remove_all(copy, ec);
+        return old;
+    }
+    LOGR("app: saves copied from %s to %s", old.c_str(), shared.c_str());
+    return shared;
+}
+
 // The logs go in the MostWanted folder beside the game, where the player finds them without Android/data (which
-// Android 11 on hides from file managers); without all files access yet (the first run asks for it), in the app's own
-// folder as before
+// Android 11 on hides from file managers); the app's own folder only if it can't be written after all
 std::filesystem::path LogDir() {
     std::filesystem::path shared = std::filesystem::path(host::kShared) / "logs";
     std::error_code ec;
@@ -366,6 +421,7 @@ int main(int, char**) {
         __android_log_print(ANDROID_LOG_ERROR, "BLACK", "SDL_Init: %s", SDL_GetError());
         return 1;
     }
+    WaitForSharedAccess();
     // a file named perf in the app's folder: the perf log lines, as XBE_PERF gives them on a PC
     if (std::error_code ec; std::filesystem::exists(app::ExeDir() / "perf", ec)) setenv("XBE_PERF", "1", 1);
     logx::Init(LogDir().string(), app::kGame.log);
@@ -390,7 +446,9 @@ int main(int, char**) {
     InitUi();
     input::Init();
     if (app::kGame.window) app::kGame.window(g_window);
-    if (!kernel::Boot(std::move(game.xbe), IMAGE_XBE, game.dir.string(), (app::ExeDir() / "hdd").string())) {
+    std::filesystem::path hdd = HddDir();
+    LOGR("app: saves in %s", hdd.c_str());
+    if (!kernel::Boot(std::move(game.xbe), IMAGE_XBE, game.dir.string(), hdd.string())) {
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, Utf8(app::kGame.short_title).c_str(),
                                  app::Ui("The game failed to start, see the log in the logs folder.", false).c_str(),
                                  g_window);
