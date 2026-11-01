@@ -76,9 +76,14 @@ body:
     attributes:
       label: Log
       description: |
-        Attach `mostwanted.log` from `MostWanted/logs` on the phone's storage (`Android/data/com.racas.mostwanted/files/logs` without all files access; drag it here).
-        For a crash, an `adb logcat` taken right after it happens helps a lot.
-      render: text
+        Attach the logs by dragging the files here. The logs are in:
+        - **`MostWanted/logs`** at the top of the phone's storage (`/storage/emulated/0/MostWanted/logs`), or
+        - `Android/data/com.racas.mostwanted/files/logs` if you didn't allow all files access.
+
+        Always attach **`mostwanted.log`**. For a crash, open the game once more after it, then also attach the newest **`crash_<date>.txt`** from the same folder: it holds what the game was doing when it closed (Android 11 and newer).
+      placeholder: Drag mostwanted.log and crash_<date>.txt here.
+    validations:
+      required: true
     validations:
       required: true
 

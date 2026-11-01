@@ -40,7 +40,6 @@ public class MostWantedActivity extends SDLActivity {
     static final String SHARED = "MostWanted";
 
     private AlertDialog dialog;  // the one up, at most one at a time
-    private boolean notNow;      // the player turned the access down this run
     private boolean resumed;
     private UpdateChecker.Release update;  // a newer release not shown yet
     private final GameImporter importer = new GameImporter(this);
@@ -246,7 +245,17 @@ public class MostWantedActivity extends SDLActivity {
         super.onResume();
         resumed = true;
         askForGame();
+        saveCrashLogs();
         tellOfUpdate();
+    }
+
+    // the last crashes' tombstones into the MostWanted folder's logs, as native/main.cpp's LogDir picks it; once the
+    // access is granted, so they don't land in the app's own folder for want of it
+    private void saveCrashLogs() {
+        if (!hasStorageAccess()) return;
+        File own = getExternalFilesDir(null);
+        File fallback = new File(own != null ? own : getFilesDir(), "logs");
+        CrashLogs.save(this, new File(new File(Environment.getExternalStorageDirectory(), SHARED), "logs"), fallback);
     }
 
     @Override
@@ -294,12 +303,14 @@ public class MostWantedActivity extends SDLActivity {
 
     private void askForGame() {
         if (importing || (dialog != null && dialog.isShowing())) return;
-        File own = getExternalFilesDir(null);
-        if (own != null && hasGame(new File(own, "assets"))) return;
+        // the access comes first and can't be turned down, even with the game in the app's own folder: the saves, the
+        // logs and the crash logs are in the MostWanted folder, and native/main.cpp starts nothing without it
         if (!hasStorageAccess()) {
-            if (!notNow) askAllFilesAccess();
+            askAllFilesAccess();
             return;
         }
+        File own = getExternalFilesDir(null);
+        if (own != null && hasGame(new File(own, "assets"))) return;
         File shared = new File(Environment.getExternalStorageDirectory(), SHARED);
         shared.mkdirs();
         if (hasGame(shared) || hasGame(new File(shared, "assets"))) return;
@@ -390,7 +401,6 @@ public class MostWantedActivity extends SDLActivity {
                         getString(ALL_FILES_ACCESS ? R.string.storage_all_files : R.string.storage_permission)))
                 .setCancelable(false)
                 .setPositiveButton(R.string.allow_access, (d, w) -> openAccessSettings())
-                .setNegativeButton(R.string.not_now, (d, w) -> notNow = true)
                 .setNeutralButton(R.string.import_game, (d, w) -> startImport())
                 .setOnDismissListener(d -> tellOfUpdate())
                 .show();
