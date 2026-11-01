@@ -28,12 +28,12 @@
 ## 🚀 Installation
 
 1. Install **`{{APK}}`** on your phone.
-2. Open **Most Wanted** and allow **all files access** when it asks.
+2. Open **Most Wanted** and allow **all files access** when it asks: the game needs it to start.
 3. Copy the game into **`/storage/emulated/0/MostWanted`**, or into a `MostWanted` folder on your SD card: the disc image (`.iso`), or `default.xbe` with the disc's `NFS` folder beside it.
 4. The game starts as soon as it finds the files.
 
 > [!TIP]
-> If you don't grant all files access, put the game in `Android/data/com.racas.mostwanted/files/assets` instead. Settings, saves and the shader cache are stored in `Android/data/com.racas.mostwanted/files`; logs go in `MostWanted/logs` (in `Android/data/com.racas.mostwanted/files/logs` without all files access).
+> Saves are in `MostWanted/hdd`, logs and crash reports in `MostWanted/logs`. Updating from a version that kept the saves in `Android/data/com.racas.mostwanted/files/hdd` copies them over at the first launch. Settings and the shader cache stay in `Android/data/com.racas.mostwanted/files`.
 
 ## ✨ Features
 
@@ -42,7 +42,8 @@
 | 🖥️ **Graphics** | Render resolution 20–200%, aspect ratio from 1:1 to full screen, FXAA / SSAA 2x, sharpen, vivid, scanline and CRT filters, unlocked frame rate, V-Sync, FPS counter, anisotropic filtering |
 | 👆 **Touch Controls** | A full Xbox pad on screen, layout presets, a layout editor to move and resize each control, PS2 button icons |
 | 🎮 **Other Input** | SDL3 controllers with rumble, keyboard with rebindable controls |
-| ⚙️ **General** | Language (with Indonesian), audio output, update check, pause while in the background |
+| 🕹️ **Cheats** | Infinite nitrous and speedbreaker, max cash, no police, no traffic, unlock all, auto shift in drag races |
+| ⚙️ **General** | Language (with Indonesian), audio output, update check, pause while in the background, crash reports in the MostWanted folder |
 
 The settings panel opens from the gear at the top of the screen. Android's back button is the controller's Start.
 
