@@ -361,6 +361,79 @@ jobs:
         shell: bash
         run: mv app/build/outputs/apk/release/app-release.apk "Mostwanted-${{ steps.version.outputs.artifact }}.apk"
 
+      # ---------------------------------------------------------------
+      # 1) UltraZip: re-pack APK dengan kompresi maksimum (level 9)
+      #    - Entry STORED tetap STORED (resources.arsc, .so, dll.)
+      #    - Entry DEFLATED di-upgrade ke level 9
+      # ---------------------------------------------------------------
+      - name: UltraZip APK (kompresi maksimum)
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="Mostwanted-${{ steps.version.outputs.artifact }}.apk"
+          if [ ! -f "$APK" ]; then
+            echo "::error::APK tidak ditemukan: $APK"
+            exit 1
+          fi
+
+          before=$(stat -c %s "$APK")
+          echo "Ukuran sebelum UltraZip: $before bytes"
+
+          python3 - "$APK" <<'PY'
+          import sys, os, zipfile, tempfile, shutil
+          src = sys.argv[1]
+          fd, dst = tempfile.mkstemp(suffix=".apk")
+          os.close(fd)
+          with zipfile.ZipFile(src, 'r') as zin, \
+               zipfile.ZipFile(dst, 'w') as zout:
+              for info in zin.infolist():
+                  data = zin.read(info.filename)
+                  ni = zipfile.ZipInfo(info.filename, date_time=info.date_time)
+                  ni.external_attr = info.external_attr
+                  ni.internal_attr = info.internal_attr
+                  ni.create_system = info.create_system
+                  if info.compress_type == zipfile.ZIP_STORED:
+                      ni.compress_type = zipfile.ZIP_STORED
+                      zout.writestr(ni, data)
+                  else:
+                      ni.compress_type = zipfile.ZIP_DEFLATED
+                      zout.writestr(ni, data, compresslevel=9)   # level 9 = "Ultra"
+          shutil.move(dst, src)
+          PY
+
+          # Hapus signature lama supaya apksigner bisa menandatangani ulang
+          zip -q -d "$APK" \
+            'META-INF/*.SF' 'META-INF/*.RSA' \
+            'META-INF/*.DSA' 'META-INF/*.EC' 2>/dev/null || true
+
+          after=$(stat -c %s "$APK")
+          echo "Ukuran sesudah UltraZip: $after bytes"
+          echo "Hemat: $((before - after)) bytes"
+
+      # ---------------------------------------------------------------
+      # 2) Zipalign wajib setelah re-zip, sebelum signing
+      # ---------------------------------------------------------------
+      - name: Zipalign APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="Mostwanted-${{ steps.version.outputs.artifact }}.apk"
+          if [ -z "${ANDROID_HOME:-}" ]; then
+            if command -v cygpath >/dev/null 2>&1; then
+              ANDROID_HOME="$(cygpath -u "${LOCALAPPDATA:-}")/Android/Sdk"
+            else
+              ANDROID_HOME="${LOCALAPPDATA:-$HOME}/Android/Sdk"
+            fi
+          fi
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* 2>/dev/null | sort -V | tail -1)
+          if [ -z "$BT" ]; then
+            echo "::error::build-tools tidak ditemukan di $ANDROID_HOME/build-tools"
+            exit 1
+          fi
+          "$BT/zipalign" -p -f 4 "$APK" "$APK.aligned"
+          mv "$APK.aligned" "$APK"
+          echo "Zipalign OK: $APK"
+
       - name: Sign & verify release APK
         shell: cmd
         run: |
