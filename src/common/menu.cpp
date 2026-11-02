@@ -806,30 +806,20 @@ void DragScroll() {
     ImGui::ClearActiveID();
 }
 
-// the panel's own size in ems (DrawPanel's SetNextWindowSize) and the slack it leaves at the screen's edge
-constexpr float kPanelWideEms = 40.0f;
-constexpr float kPanelTallEms = 16.0f;
-constexpr float kPanelMargin = 1.08f;  // 8% slack so the border is never flush against the edge
-
-// the interface's pixel-font target: 13 px on a 540-line phone (the original baseline), the screen's smaller side
-// scaled up from there. Capped so the panel still fits both dimensions with its margin, floored so text stays
-// legible (arrows and headings read as mush below 8 px), and ceilinged so a 4K monitor's UI stays comfortable (the
-// unclamped formula reaches 52 px at 2160 rows, which is too large)
-float InterfaceScale(ImGuiIO& io) {
-    float base = io.Fonts->Fonts.empty() ? 13.0f : io.Fonts->Fonts[0]->FontSize;
-    float target = std::max(13.0f, std::min(io.DisplaySize.x, io.DisplaySize.y) * 13.0f / 540.0f);
-    float fit_w = io.DisplaySize.x / (kPanelWideEms * kPanelMargin);
-    float fit_h = io.DisplaySize.y / (kPanelTallEms * kPanelMargin);
-    target = std::min({target, fit_w, fit_h});
-    target = std::clamp(target, 8.0f, 44.0f);
-    return target / base;
-}
-
 void DrawPanel() {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     float em = ImGui::GetFontSize();
+
+    // auto-detect ke device: pakai ukuran desain 80x50 em, tapi di-clamp ke layar
+    // (dengan inset kecil) supaya tidak pernah keluar tepi di ponsel/tablet/window kecil
+    const float inset = std::max(em * 0.5f, 6.0f);
+    const float max_w = std::max(vp->Size.x - inset * 2.0f, 1.0f);
+    const float max_h = std::max(vp->Size.y - inset * 2.0f, 1.0f);
+    const float w = std::min(em * 80.0f, max_w);
+    const float h = std::min(em * 50.0f, max_h);
+
     ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(em * kPanelWideEms, em * kPanelTallEms), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
     for (const auto& [col, color] : kPanelColors) ImGui::PushStyleColor(col, color);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
@@ -876,6 +866,25 @@ void PaceAt(uint32_t cap) {
     if (next < now - period) next = now;
     while (clock::now() + std::chrono::milliseconds(2) < next) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     while (clock::now() < next) std::this_thread::yield();
+}
+
+// skala UI mengikuti device: DPI (kalau platform melaporkannya, mis. Android/iOS lewat
+// SDL_GetWindowDisplayScale) atau sisi terpendek layar, mana yang lebih besar.
+// 540 adalah tinggi desain untuk teks 13 px; 1.0 di window desktop biasa.
+float UiScale() {
+    // DPI dari OS: 2.0 di ponsel modern, 1.0-1.5 di desktop Windows/macOS
+    float dpi = 1.0f;
+    if (SDL_Window* w = static_cast<SDL_Window*>(Window())) {
+        float s = SDL_GetWindowDisplayScale(w);
+        if (s > 0.0f) dpi = s;
+    }
+    // sisi terpendek: portrait 1080x2400 dan landscape 2400x1080 menghasilkan angka sama
+    ImVec2 d = ImGui::GetIO().DisplaySize;
+    float short_side = std::min(d.x, d.y);
+    float from_side = std::max(1.0f, short_side / 540.0f);
+    // pilih yang paling besar, batasi 1.0..4.0 supaya window desktop tidak membengkak
+    // dan layar sangat rapat tidak membuat teks raksasa
+    return std::clamp(std::max(from_side, dpi), 1.0f, 4.0f);
 }
 
 }  // namespace
@@ -987,8 +996,7 @@ bool rows::PollBinding() {
     if (g_capture >= 0) {
         const int key = input::PressedKey();
         if (!g_capture_armed) {
-            g_capture_armed =
-                !key && input::PressedPadInput().empty();
+            g_capture_armed = !key && input::PressedPadInput().empty();
             return false;
         }
         if (!key) return false;
@@ -1014,17 +1022,12 @@ bool rows::PollBinding() {
 
         // Logical trigger wins over the first raw sample.
         // Otherwise retain the first input rather than chasing noise.
-        const bool trigger =
-            source == "trigger left" || source == "trigger right";
-        const bool already_trigger =
-            candidate == "trigger left" || candidate == "trigger right";
+        const bool trigger = source == "trigger left" || source == "trigger right";
+        const bool already_trigger = candidate == "trigger left" || candidate == "trigger right";
 
-        if (trigger && !already_trigger)
-            candidate = source;
+        if (trigger && !already_trigger) candidate = source;
 
-        if (Clock::now() - first_press <
-            std::chrono::milliseconds(100))
-            return false;
+        if (Clock::now() - first_press < std::chrono::milliseconds(100)) return false;
 
         input::PadBind(size_t(g_pad_capture.load()), candidate);
         candidate.clear();
@@ -1128,9 +1131,12 @@ void DrawUi(double fps) {
     if (MenuOpen()) io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
     else io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
     io.KeyRepeatRate = 0.1f;  // held arrows step ten times a second, ImGui's twenty is too fast for settings
-    // auto-scale to the device's screen (see InterfaceScale): 13 px on a 540-line phone, the smaller side of the
-    // screen scaling up, capped so the panel still fits and clamped so text stays legible on tiny displays
-    io.FontGlobalScale = InterfaceScale(io);
+
+    // font & panel ikut device: DPI atau sisi terpendek layar, bukan cuma tinggi layar
+    // (rotasi portrait <-> landscape tidak melompat, kerapatan piksel dihitung)
+    float base = io.Fonts->Fonts.empty() ? 13.0f : io.Fonts->Fonts[0]->FontSize;
+    if (base > 0.0f) io.FontGlobalScale = UiScale() * 13.0f / base;
+
     if (MenuOpen()) {
         PollCapture();
         PollPadCapture();
