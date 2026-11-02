@@ -806,11 +806,30 @@ void DragScroll() {
     ImGui::ClearActiveID();
 }
 
+// the panel's own size in ems (DrawPanel's SetNextWindowSize) and the slack it leaves at the screen's edge
+constexpr float kPanelWideEms = 40.0f;
+constexpr float kPanelTallEms = 16.0f;
+constexpr float kPanelMargin = 1.08f;  // 8% slack so the border is never flush against the edge
+
+// the interface's pixel-font target: 13 px on a 540-line phone (the original baseline), the screen's smaller side
+// scaled up from there. Capped so the panel still fits both dimensions with its margin, floored so text stays
+// legible (arrows and headings read as mush below 8 px), and ceilinged so a 4K monitor's UI stays comfortable (the
+// unclamped formula reaches 52 px at 2160 rows, which is too large)
+float InterfaceScale(ImGuiIO& io) {
+    float base = io.Fonts->Fonts.empty() ? 13.0f : io.Fonts->Fonts[0]->FontSize;
+    float target = std::max(13.0f, std::min(io.DisplaySize.x, io.DisplaySize.y) * 13.0f / 540.0f);
+    float fit_w = io.DisplaySize.x / (kPanelWideEms * kPanelMargin);
+    float fit_h = io.DisplaySize.y / (kPanelTallEms * kPanelMargin);
+    target = std::min({target, fit_w, fit_h});
+    target = std::clamp(target, 8.0f, 44.0f);
+    return target / base;
+}
+
 void DrawPanel() {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     float em = ImGui::GetFontSize();
     ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(em * 40, em * 16), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(em * kPanelWideEms, em * kPanelTallEms), ImGuiCond_Always);
     for (const auto& [col, color] : kPanelColors) ImGui::PushStyleColor(col, color);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
@@ -1109,10 +1128,9 @@ void DrawUi(double fps) {
     if (MenuOpen()) io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
     else io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
     io.KeyRepeatRate = 0.1f;  // held arrows step ten times a second, ImGui's twenty is too fast for settings
-    // scale the font with the output height: a phone's dense screen reads 13 px text at 540 rows to the height, the
-    // game's font (native/ui.cpp, taller) brought to that size
-    float base = io.Fonts->Fonts.empty() ? 13.0f : io.Fonts->Fonts[0]->FontSize;
-    io.FontGlobalScale = std::max(1.0f, io.DisplaySize.y / 540.0f) * 13.0f / base;
+    // auto-scale to the device's screen (see InterfaceScale): 13 px on a 540-line phone, the smaller side of the
+    // screen scaling up, capped so the panel still fits and clamped so text stays legible on tiny displays
+    io.FontGlobalScale = InterfaceScale(io);
     if (MenuOpen()) {
         PollCapture();
         PollPadCapture();
