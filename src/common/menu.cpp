@@ -580,13 +580,14 @@ constexpr uint32_t kPanelSizes[] = {40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 
 uint32_t g_panel_width_percent = 100;
 uint32_t g_panel_height_percent = 100;
 
-// the panel is dragged from any empty spot: its top-left corner, its start-of-drag values, and whether a drag is
-// running; the first open centres it, after that it stays where the user dropped it (kept within the screen)
+// the panel is dragged from any empty spot: its top-left corner, the mouse's place and the panel's place at the
+// start of a drag, and whether a drag is running; the first open centres it, after that it stays where the user
+// dropped it, kept within the screen
 bool g_panel_placed = false;
 ImVec2 g_panel_pos{0, 0};
 bool g_panel_dragging = false;
-ImVec2 g_panel_drag_start{0, 0};   // the mouse's place when the drag began
-ImVec2 g_panel_drag_origin{0, 0};  // the panel's top-left when the drag began
+ImVec2 g_panel_drag_start{0, 0};
+ImVec2 g_panel_drag_origin{0, 0};
 
 // the action's key and its alternate as their boxes show them, the alternate blank when there is none
 std::vector<std::string> KeyBoxes(size_t action) {
@@ -799,7 +800,7 @@ ImVec2 PanelPixelSize(float em, uint32_t width_percent, uint32_t height_percent)
                   std::min(em * 50.0f * height_percent / 100.0f, max_h));
 }
 
-// The DEBUG tab: the panel's own size (step rows and presets), a CENTER button, then a few numbers
+// The DEBUG tab: the panel's own size (step rows, presets, CENTER), then a few numbers
 void DrawDebug(float em) {
     Section("PANEL SIZE");
     ImGui::PushStyleColor(ImGuiCol_Text, kDim);
@@ -829,10 +830,10 @@ void DrawDebug(float em) {
     }
 
     ImGui::Dummy(ImVec2(0, em * 0.3f));
-    if (ImGui::Button("CENTER PANEL", ImVec2(em * 14, 0))) g_panel_placed = false;  // recentres next draw
+    if (ImGui::Button("CENTER PANEL", ImVec2(em * 14, 0))) g_panel_placed = false;  // recentres on next draw
     ImGui::PushStyleColor(ImGuiCol_Text, kDim);
     ImGui::TextWrapped("Drag any empty spot inside the panel to move it anywhere on the screen. Tabs, rows and "
-                       "buttons still work as before; only truly empty space starts a drag.");
+                       "buttons keep their own input; only truly empty space starts a drag.");
     ImGui::PopStyleColor();
 
     Section("INFO");
@@ -930,7 +931,7 @@ void DrawFooter(float em) {
 
 // The rows a finger drags up or down scroll with it, as a phone's lists do: the row it came down on is let go, so the
 // drag presses nothing. A drag of the scrollbar itself stays the scrollbar's. While the panel itself is being dragged,
-// this stays out of the way.
+// this stays out of the way so the panel moves, not the list.
 void DragScroll() {
     static bool dragging = false;
     if (g_panel_dragging) {
@@ -989,7 +990,7 @@ void DrawPanel() {
     ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, em * 2.0f);
     constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
                                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoTitleBar |
-                                        ImGuiWindowFlags_NoMove;  // moving is hand-rolled below
+                                        ImGuiWindowFlags_NoMove;  // movement is hand-rolled below
     if (ImGui::Begin("##settings", nullptr, kFlags)) {
         DrawTitle(em);
         float footer = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeightWithSpacing() + em;
@@ -1002,11 +1003,12 @@ void DrawPanel() {
         ImGui::EndChild();
         DrawFooter(em);
 
-        // Drag from anywhere: pressing on an empty spot inside the panel starts a drag, while interactive widgets
-        // keep their own input since they set ImGui's active id on press. The check runs after all items (so the
-        // active id is settled for this frame) and DragScroll already ran above, so a touch drag on empty space moves
-        // the panel rather than scrolling.
-        if (!g_panel_dragging && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+        // Drag from any empty spot: pressing where no widget claimed the active id starts a drag, while a press on a
+        // tab, row, button or key box leaves the active id set and drags nothing. The check runs after all items (so
+        // the active id is settled for this frame) and after DragScroll, so touch drags on the rows still scroll while
+        // touch drags on empty space move the panel.
+        if (!g_panel_dragging && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows |
+                                                        ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
             ImGui::IsMouseClicked(ImGuiMouseButton_Left) && ImGui::GetActiveID() == 0) {
             g_panel_dragging = true;
             g_panel_drag_start = ImGui::GetIO().MousePos;
