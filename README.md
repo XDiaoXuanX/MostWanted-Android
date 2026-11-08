@@ -1,4 +1,6 @@
 # Need for Speed: Most Wanted for Android
+**English** | [Bahasa Indonesia](README.id.md)
+
 An unofficial native Android port of the original Xbox version of *Need for Speed: Most Wanted* (Black Edition), with touch controls, controller and keyboard support and extended graphics options.
 
 The game's x86 code is statically recompiled ahead of time to C++ with [XboxXBE-Recomp](https://github.com/TGP482/XboxXBE-Recomp), then built for arm64. Drawing goes through Vulkan, and windowing, input and audio through SDL3. No emulator is involved. The Android host (Vulkan renderer, DirectSound, touch controls, settings panel) comes from [Black-Android](https://github.com/RanggaCasper/Black-Android), as [ShaolinMonks-Android](https://github.com/RanggaCasper/ShaolinMonks-Android) carries it.
@@ -21,12 +23,10 @@ The game's x86 code is statically recompiled ahead of time to C++ with [XboxXBE-
 
 ## Installation
 1. Install the APK.
-2. Open **Most Wanted** and allow **all files access** when it asks (on Android 10, the **storage** permission).
+2. Open **Most Wanted** and allow **all files access** when it asks (on Android 10, the **storage** permission). It is required: the game doesn't start without it.
 3. Copy the game into `/storage/emulated/0/MostWanted`, or into a `MostWanted` folder at the top of your SD card: either the disc image (`.iso`) or `default.xbe` with the disc's `NFS` folder beside it. The app creates the folder on the phone's storage once access is allowed, and starts the game as soon as it finds the files.
 
-If you don't grant that access, `Android/data/com.racas.mostwanted/files/assets` works too.
-
-Settings (`mostwanted.toml`, `android.toml`, `layout.toml`), saves (`hdd`) and the shader cache are stored in `Android/data/com.racas.mostwanted/files`. Logs go in `/storage/emulated/0/MostWanted/logs` (in `Android/data/com.racas.mostwanted/files/logs` without all files access).
+Saves go in `/storage/emulated/0/MostWanted/hdd` and logs in `/storage/emulated/0/MostWanted/logs`, so they stay if the app is uninstalled. Updating from a version that kept the saves in `Android/data/com.racas.mostwanted/files/hdd` copies them there on the first start; the old copy is left as it was. Settings (`mostwanted.toml`, `android.toml`, `layout.toml`) and the shader cache stay in `Android/data/com.racas.mostwanted/files`.
 
 The supported disc is the USA Black Edition (`default.xbe` SHA-1 `f636a16af04171089f879a4bed646e185c734233`).
 
@@ -60,10 +60,11 @@ Tested on a Xiaomi Pad 7 (Snapdragon 7+ Gen 3): boot, the menus, the career intr
 - `xbe_symbols` finds 165 of the 238 XDK functions the host knows and all 12 data symbols; the others are not linked into this image. Eleven more were resolved by hand in `config/game.toml`.
 - Most Wanted runs many of its vertex programs from the GPU's program memory (`LoadVertexShaderProgram` and `SelectVertexShaderDirect`), pushes its vertex constants inline, sets its pixel combiners with render states and gives its own frame and depth buffers; the host handles each.
 - Visibility tests (the sun's glare) are not counted yet: the glare stays off.
-- Known: a story film (after the first race) has been seen to stop on its first picture; a rare crash in the game's own code has been seen twice.
-- Nothing game-specific is patched yet: no frame rate unlock or cheats.
+- Game-specific work so far: the settings live in the game's own OPTIONS menu (ANDROID OPTIONS, in the main menu and the pause menu); quality switches for car and road reflections, shadows, particles, rain, screen raindrops, the yellow tint and motion blur; widescreen (Hor+) for any screen shape; SKIP MOVIES; menus by touch; a HUD layout editor; a RESET button that puts the car back on the road; and cheats (infinite nitrous and speedbreaker, max cash, no police, unlock all) on the gear's panel.
+- Fixed in the next release: the game crashed as a movie started or stopped (at boot, after a race), on phones with several cores. EA's stream reader read data the stream thread was still writing.
+- Known: a story film (after the first race) has been seen to stop on its first picture. The engine's own cutscenes (rival intros, the career's opening) can't be skipped yet.
 
-Logs are in `/storage/emulated/0/MostWanted/logs` (or `Android/data/com.racas.mostwanted/files/logs` without all files access). Please include the log when reporting a problem.
+Logs are in `/storage/emulated/0/MostWanted/logs`. On Android 11 and newer, a crash is written there as `crash_<date>.txt` the next time you open the game. Please include `mostwanted.log`, and the crash file if there is one, when reporting a problem.
 
 ## System Requirements
 - **Android** 10 or newer, arm64.
@@ -93,6 +94,16 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 ```
 
 The SDK is vendored in `sdk/`, at the upstream commit in `sdk/UPSTREAM_COMMIT`, with one change: the console's language comes from `app::ConsoleLanguage()` (`sdk/runtime/kernel/xboxkrnl.cpp`).
+
+## Linux
+The game also builds and runs natively on Linux (x86-64), from the same sources: the Vulkan renderer, sound, controllers and settings are the Android version's, with a desktop window in place of the phone's screen. Linux builds from source.
+
+- Requirements: a 64-bit distribution with a Vulkan 1.1 driver (Mesa or NVIDIA), and Clang, CMake, Ninja, Git, pkg-config, Python 3 and the Vulkan loader and headers. SDL3 is taken from the system when it has 3.2 or newer, else downloaded and built in. `build.sh` lists the packages for Arch, Debian/Ubuntu and Fedora when something is missing.
+- Put `default.xbe` with the game files, or the disc image (`.iso`), in `assets/`, then run `./build.sh` (`./build.sh debug` for the info lines in the log). It builds the recompiler, recompiles the xbe into `generated/game`, then builds `out/build/linux/mostwanted`. The first build compiles the whole game and takes 15 to 60 minutes.
+- Run `out/build/linux/mostwanted`. The game is found in an `assets` or `iso` folder beside the executable or in any folder above it, so the repo's own `assets` works as it is.
+- Settings (`mostwanted.toml`, `android.toml`, `layout.toml`), saves (`hdd`), logs and the shader cache are written beside the executable.
+- Keyboard, mouse (in the settings panel) and controllers through SDL3, on Wayland or X11. F10 opens the settings panel, F11 or Alt+Enter switches between windowed and full screen. `display_mode` (`fullscreen`, `borderless`, `windowed`) with `width` and `height` in `mostwanted.toml` set the window.
+- The game's menus get LINUX OPTIONS in place of ANDROID OPTIONS. The touch controls show only on a touch screen, after it is touched.
 
 ## Credits
 - [XboxXBE-Recomp](https://github.com/TGP482/XboxXBE-Recomp) by TGP482: the static recompiler and the portable runtime (Xbox kernel, XDK libraries and Direct3D 8) this port is built on.

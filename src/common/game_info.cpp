@@ -19,7 +19,8 @@ void Pad(int port, input::Pad& pad) {
     const bool panel = app::MenuOpen();
     if (!panel && port == 0) input::Keyboard(pad);
     const bool consumed = OptionsMenuPad(port, pad);
-    if (panel || consumed)
+    const bool camera = !panel && CinematicPad(port, pad);
+    if (panel || consumed || camera)
         pad = input::Pad{.connected = pad.connected};
 }
 
@@ -103,6 +104,7 @@ const app::GameInfo app::kGame = {
                 {"rain", &game::Opt().rain, nullptr},
                 {"rain_drops", &game::Opt().rain_drops, nullptr},
                 {"yellow_tint", &game::Opt().yellow_tint, nullptr},
+                {"night_mode", &game::Opt().night_mode, nullptr},
                 {"motion_blur", &game::Opt().motion_blur, nullptr},
                 {"shader_preload", &game::Opt().shader_preload, nullptr},
                 {"cheat_nos", &game::Opt().cheat_nos, nullptr},
@@ -110,6 +112,8 @@ const app::GameInfo app::kGame = {
                 {"cheat_cash", &game::Opt().cheat_cash, nullptr},
                 {"cheat_no_police", &game::Opt().cheat_no_police, nullptr},
                 {"cheat_unlock_all", &game::Opt().cheat_unlock_all, nullptr},
+                {"cheat_drag_shift", &game::Opt().cheat_drag_shift, nullptr},
+                {"cheat_no_traffic", &game::Opt().cheat_no_traffic, nullptr},
                 {"skip_movies", &game::Opt().skip_movies, nullptr},
                 {"fps_usage", &game::Opt().fps_usage, nullptr},
                 {"fps_temps", &game::Opt().fps_temps, nullptr},

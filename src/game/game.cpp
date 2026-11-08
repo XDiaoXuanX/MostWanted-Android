@@ -1,5 +1,7 @@
 // Need for Speed: Most Wanted (Black Edition) needs no patch of its code to boot: the XDK it calls is all on the host.
 // Its own hooks go here, [[hook]] entries in config/game.toml and X86_FUNC replacements of recompiled functions.
+#include <atomic>
+#include <chrono>
 #include <cstring>
 #include <string>
 #include <unordered_map>
@@ -14,11 +16,26 @@
 namespace game {
 
 // The console's widescreen flag (XGetVideoFlags at boot, 0x0D0202, kept at 0x48099C; set from 3:2 on, native/main.cpp)
-// gives the front end's and HUD's screen transform (0x0D4888, 0x0D8330: 576 / width across, 448 / 480 down) a frame
+// gives the front end's and HUD's screen transform (0x0D4888, 0x0D8330: 576 / width across, 448 / 480 down, made 640
+// and 480 below) a frame
 // 853 wide (480 * 16 / 9, at 0x427C00) for a 4:3 one's 640. It is the frame's own shape here, so 19.5:9 is not 16:9
 // stretched
 constexpr uint32_t kVideoFlags = 0x48099C, kWideWidth = 0x427C00;
+// The 576 and 448 (0x3D3534, 0x3D3530, read only by those two transforms) are the console's title safe area, the
+// 640x480 layout drawn 0.9 across and 0.93 down for a TV's overscan: the front end, its movies and loading screens
+// had a black border on a screen that shows the whole frame. 640 and 480 draw the layout over the whole frame, as
+// the PC's did; fe_mouse.cpp reads them back for its hit tests
+constexpr uint32_t kSafeWidth = 0x3D3534, kSafeHeight = 0x3D3530;
+void FullFrameFrontEnd() {
+    constexpr float kWidth = 640.0f, kHeight = 480.0f;
+    uint32_t w, h;
+    std::memcpy(&w, &kWidth, 4);
+    std::memcpy(&h, &kHeight, 4);
+    kernel::W32(kSafeWidth, w);
+    kernel::W32(kSafeHeight, h);
+}
 void WidenAspect() {
+    FullFrameFrontEnd();
     if (!(kernel::G<uint8_t>(kVideoFlags) & 1)) return;
     float w = 480.0f * Aspect();
     uint32_t bits;
@@ -77,12 +94,27 @@ namespace game {
 constexpr uint32_t kEnvMapSwitch = 0x4279D6, kParticleDrawSwitch = 0x4279CF, kCarShadowSwitch = 0x469910;
 constexpr uint32_t kRoadReflectionSwitch = 0x427A3C, kRoadReflectionView = 0x48AE40;
 constexpr uint32_t kEnvMapFace0Target = 0x48B4C0;  // view 0x12's [view + 0x60], the faces' views 0x70 apart
+constexpr uint32_t kSkyMidday = 0x42FDA0, kSkySunset = 0x42FDB0;
+constexpr uint32_t kHorizonHaze = 0x4279D7;
+constexpr uint32_t kHeadlightBeamColor = 0x469B0C;
+inline int g_headlights_clear_frames = 0;
+inline bool g_prev_night_mode = false;
 
 // the colour data of a view's target, [target + 8]'s, as a texture's address reads
 uint32_t TargetData(uint32_t target) {
     uint32_t surface = target ? kernel::R32(target + 8) : 0;
     return surface ? mem::VirtualFromPhysical(kernel::R32(surface + 4)) : 0;
 }
+
+uint32_t TextureDataFromInfo(uint32_t info) {
+    if (!info || !mem::IsCommitted(info)) return 0;
+    uint32_t plat = kernel::R32(info);
+    if (!plat || !mem::IsCommitted(plat)) return 0;
+    uint32_t phys = kernel::R32(plat + 0x14);
+    if (!phys) return 0;
+    return mem::VirtualFromPhysical(phys);
+}
+
 void ApplyGraphicsSwitches() {
     // HALF and QUARTER draw the cube every 2nd or 4th frame; between, the cars read the faces drawn last. OFF still
     // draws it every 512th: a cube never drawn leaves the paint white, whatever native/vulkan.cpp binds for it. Out of a
@@ -101,6 +133,42 @@ void ApplyGraphicsSwitches() {
     g_road_reflection = TargetData(kernel::R32(kRoadReflectionView + 0x60));
     // the cube is its six faces' memory, the first face's at its start
     g_env_cube = TargetData(kernel::R32(kEnvMapFace0Target));
+
+    // Update sky texture targets if available (from global array 0x4D5578)
+    if (uint32_t d = TextureDataFromInfo(kernel::R32(0x4D5578 + 0x08))) g_sky_clouds_a_data = d;
+    if (uint32_t d = TextureDataFromInfo(kernel::R32(0x4D5578 + 0x10))) g_sky_clouds_b_data = d;
+
+    // night mode sky dome multipliers, horizon haze, and headlight road projection color
+    static const float kSkyDayMidday[4] = {0.9723f, 0.9900f, 1.1000f, 1.0f};
+    static const float kSkyDaySunset[4] = {0.95858f, 1.0700f, 1.1150f, 1.0f};
+    static const float kSkyNight[4] = {0.10f, 0.15f, 0.32f, 1.0f};
+    const float* midday = Opt().night_mode ? kSkyNight : kSkyDayMidday;
+    const float* sunset = Opt().night_mode ? kSkyNight : kSkyDaySunset;
+    std::memcpy(kernel::HostPtr(kSkyMidday), midday, sizeof(kSkyNight));
+    std::memcpy(kernel::HostPtr(kSkySunset), sunset, sizeof(kSkyNight));
+    kernel::G<uint8_t>(kHorizonHaze) = Opt().night_mode ? 0 : 1;
+    kernel::W32(kHeadlightBeamColor, Opt().night_mode ? 0x48FFF4D8 : 0x80cccccc);
+
+    // Car headlight beam quad geometry tuning:
+    // Default vanilla is a 20m flat rectangle (13m center, 10m length, 4.9m width) which severely clips/floats on curves.
+    // In night mode, use a realistic 12m cone (10m center, 6m length, 5.2m wide ahead, 2.4m at bumper) that hugs road contours.
+    static const float kBeamDay[5] = {13.0f, 10.0f, 4.9f, 10.0f, 4.9f};
+    static const float kBeamNight[5] = {10.0f, 6.0f, 5.2f, 6.0f, 2.4f};
+    const float* beam = Opt().night_mode ? kBeamNight : kBeamDay;
+    kernel::G<float>(0x469ACC) = beam[0];
+    kernel::G<float>(0x469AE4) = beam[1];
+    kernel::G<float>(0x469AE8) = beam[1];
+    kernel::G<float>(0x469AEC) = beam[2];
+    kernel::G<float>(0x469AF0) = beam[2];
+    kernel::G<float>(0x469AF4) = beam[3];
+    kernel::G<float>(0x469AF8) = beam[3];
+    kernel::G<float>(0x469AFC) = beam[4];
+    kernel::G<float>(0x469B00) = beam[4];
+
+    bool night = Opt().night_mode;
+    if (!night && g_prev_night_mode) g_headlights_clear_frames = 120;
+    g_prev_night_mode = night;
+    if (g_headlights_clear_frames > 0) --g_headlights_clear_frames;
 }
 
 // Cheats:
@@ -239,21 +307,119 @@ X86_FUNC(sub_002527A0) {
     ctx.esp += 4;
 }
 
-// The yellow look: the "Visual Look Pass" (0x0CDA40, pixel shader 0x17) adds the scene times a tint (texture 3) over
+// The yellow look and night mode look: the "Visual Look Pass" (0x0CDA40, pixel shader 0x17) adds the scene times a tint (texture 3) over
 // the desaturated scene. 0x0C1BD0 fills that tint's 256x1 ramp ([this + 0x234]) from a curve (+0x50) times the colour
 // at +0xA0/+0xA4/+0xA8 (R, G, B), the visual treatment's, blended by the game through the day. YELLOW TINT off makes
-// the ramp grey of the colour's luma while it is built, and gives the game its colour back
+// the ramp grey of the colour's luma while it is built. NIGHT MODE tints it with cool moonlight blue
 X86_EXTERN_FUNC(__imp__sub_000C1BD0);
 X86_FUNC(sub_000C1BD0) {
-    if (game::Opt().yellow_tint) return __imp__sub_000C1BD0(ctx, base);
+    if (game::Opt().yellow_tint && !game::Opt().night_mode) return __imp__sub_000C1BD0(ctx, base);
     uint32_t tint = ctx.ecx + 0xA0;
     float& r = kernel::G<float>(tint);
     float& g = kernel::G<float>(tint + 4);
     float& b = kernel::G<float>(tint + 8);
     float saved[] = {r, g, b};
-    r = g = b = 0.299f * saved[0] + 0.587f * saved[1] + 0.114f * saved[2];
+    float luma = 0.299f * saved[0] + 0.587f * saved[1] + 0.114f * saved[2];
+    if (game::Opt().night_mode) {
+        r = 0.15f * luma;
+        g = 0.32f * luma;
+        b = 0.68f * luma;
+    } else {
+        r = g = b = luma;
+    }
     __imp__sub_000C1BD0(ctx, base);
     r = saved[0], g = saved[1], b = saved[2];
+}
+
+// In night mode, clamp bloom intensity (+0x170) to prevent blinding daytime glare
+X86_EXTERN_FUNC(__imp__sub_000CDA40);
+X86_FUNC(sub_000CDA40) {
+    if (!game::Opt().night_mode) return __imp__sub_000CDA40(ctx, base);
+    uint32_t obj = ctx.ecx;
+    float& bloom = kernel::G<float>(obj + 0x170);
+    float saved_bloom = bloom;
+    bloom = std::min(bloom, 0.20f);
+    __imp__sub_000CDA40(ctx, base);
+    bloom = saved_bloom;
+}
+
+// Sun glare (0x0D5AB0) and sun disk/rays pass (0x0D5CA0): night mode skips them completely
+X86_EXTERN_FUNC(__imp__sub_000D5AB0);
+X86_FUNC(sub_000D5AB0) {
+    if (game::Opt().night_mode) {
+        ctx.esp += 4;
+        return;
+    }
+    __imp__sub_000D5AB0(ctx, base);
+}
+
+X86_EXTERN_FUNC(__imp__sub_000D5CA0);
+X86_FUNC(sub_000D5CA0) {
+    if (game::Opt().night_mode) {
+        ctx.esp += 4;
+        return;
+    }
+    __imp__sub_000D5CA0(ctx, base);
+}
+
+// Vehicle headlights and flares (0x24AB90): PVehicle::mGlareState (at [esp + 4]) bits | 7
+// turns on front headlights, flares and illuminated light textures on all vehicles
+X86_EXTERN_FUNC(__imp__sub_0024AB90);
+X86_FUNC(sub_0024AB90) {
+    uint32_t ptr = kernel::R32(ctx.esp + 4);
+    if (ptr && mem::IsCommitted(ptr)) {
+        if (game::Opt().night_mode) {
+            kernel::W32(ptr, kernel::R32(ptr) | 7);
+        } else if (game::g_headlights_clear_frames > 0) {
+            kernel::W32(ptr, kernel::R32(ptr) & ~7u);
+        }
+    }
+    __imp__sub_0024AB90(ctx, base);
+}
+
+// Vehicle headlight ground projection (0x24ABE0): arg 5 (at [esp + 20])
+// activates the "2PLAYERHEADLIGHT1" headlight beam quad projected onto the road surface
+X86_EXTERN_FUNC(__imp__sub_0024ABE0);
+X86_FUNC(sub_0024ABE0) {
+    if (game::Opt().night_mode) {
+        kernel::W32(ctx.esp + 20, 1);
+    }
+    __imp__sub_0024ABE0(ctx, base);
+}
+
+// InitSkyTextures: also update sky texture addresses from global array
+X86_EXTERN_FUNC(__imp__sub_00244700);
+X86_FUNC(sub_00244700) {
+    __imp__sub_00244700(ctx, base);
+    if (uint32_t d = game::TextureDataFromInfo(kernel::R32(0x4D5578 + 0x08))) game::g_sky_clouds_a_data = d;
+    if (uint32_t d = game::TextureDataFromInfo(kernel::R32(0x4D5578 + 0x10))) game::g_sky_clouds_b_data = d;
+}
+
+// In night mode, ensure cloud/star layers (layer 1 & 2) have full alpha (1.0f) so they are never skipped
+X86_EXTERN_FUNC(__imp__sub_00244DB0);
+X86_FUNC(sub_00244DB0) {
+    uint32_t layer = kernel::R32(ctx.esp + 8);
+    uint32_t ptr_a = kernel::R32(ctx.esp + 24);
+    __imp__sub_00244DB0(ctx, base);
+    if (game::Opt().night_mode && (layer == 1 || layer == 2)) {
+        if (ptr_a && mem::IsCommitted(ptr_a)) {
+            kernel::G<float>(ptr_a) = 1.0f;
+        }
+    }
+}
+
+// In night mode, boost the cloud/star layers (layer 1 & 2) color to brilliant white (1.0)
+// so the stars shine crisp and bright in the night sky
+X86_EXTERN_FUNC(__imp__sub_00244B70);
+X86_FUNC(sub_00244B70) {
+    uint32_t layer = kernel::R32(ctx.esp + 8);
+    if (game::Opt().night_mode && (layer == 1 || layer == 2)) {
+        kernel::G<float>(0x42FE00) = 1.0f;
+        kernel::G<float>(0x42FE04) = 1.0f;
+        kernel::G<float>(0x42FE08) = 1.0f;
+        kernel::G<float>(0x42FE0C) = 1.0f;
+    }
+    __imp__sub_00244B70(ctx, base);
 }
 
 // The motion blur: the "Motion Blur" pass (0x0D1440, cdecl: the view, a flag, a mode, an amount; from the "Visual Look
@@ -262,9 +428,179 @@ X86_FUNC(sub_000C1BD0) {
 // returns false itself (0x0D1661): MOTION BLUR off returns so at once
 X86_EXTERN_FUNC(__imp__sub_000D1440);
 X86_FUNC(sub_000D1440) {
-    if (game::Opt().motion_blur) return __imp__sub_000D1440(ctx, base);
+    // and none while cinematic mode flies the camera: its moves are no speed of the car's
+    if (game::Opt().motion_blur && !game::CinematicActive()) return __imp__sub_000D1440(ctx, base);
     ctx.eax &= ~0xFFu;
     ctx.esp += 4;
+}
+
+// EA's file streams ("STRM", the system's handles 16 bytes each at +0x34): the stream thread hands a handle its data
+// in 0x871D0, under the system's critical section (+8, entered by 0x2BC401/left by 0x2BC40C with the system + 4),
+// adding to the bytes ready (+8) and then, from none, setting the first block (+0xC). The reader 0x87A40 (cdecl, the
+// handle) checks the bytes and takes the block before it enters the section: on a single core the window was
+// a few instructions, on the phone's cores (and stores out of order) the movies read a block not set yet, 0xEEEEEEEE
+// from bMalloc's fill of a fresh handle, a SIGSEGV as a movie started or stopped. The whole read holds the section
+// (recursive: the reader's own enter nests)
+X86_EXTERN_FUNC(__imp__sub_00087A40);
+X86_EXTERN_FUNC(sub_002BC401);
+X86_EXTERN_FUNC(sub_002BC40C);
+X86_FUNC(sub_00087A40) {
+    constexpr uint32_t kStrm = 0x4D525453;
+    uint32_t handle = kernel::R32(ctx.esp + 4);
+    uint32_t system = handle ? kernel::R32(handle) : 0;
+    if (!system || !mem::IsCommitted(system) || kernel::R32(system) != kStrm) return __imp__sub_00087A40(ctx, base);
+    ctx.ecx = system + 4;
+    X86_PUSH32(0);
+    sub_002BC401(ctx, base);
+    __imp__sub_00087A40(ctx, base);
+    uint32_t result = ctx.eax;
+    ctx.ecx = system + 4;
+    X86_PUSH32(0);
+    sub_002BC40C(ctx, base);
+    ctx.eax = result;
+}
+
+// AUTO SHIFT IN DRAG: the player's transmission (ITransmission, 0x11FB0, found as RESET finds IResetable) is
+// EngineDragster's (its interface at +0x50, vtable 0x3E3560) in a drag race. Its shift potential (+0x18C, the drag
+// HUD's shift state, 0x2108C0) stayed 0 through a whole race, and the HUD's update was not called in every race, so the
+// cheat watches the engine itself: the rpm (+0x184, IEngine's 0x1F3890) against the redline ([+0x150] + 0x58,
+// 0x1F38C0), the gear (+0x88: 0 reverse, 1 neutral, 2 first) and the clutch's state (+0x19C, 0 engaged), and shifts with
+// the transmission's own Shift (vtable +0xC, 0x1FDF50, thiscall, the gear; 0x1F3F70 checks it against the top gear).
+// Once a gear, again if the gear has not changed a while later. EngineDragster stays: the races' EngineRacer in its
+// place broke the drag race's sound as it loaded (0x8AC00 on a stream that was not there)
+namespace {
+constexpr uint32_t kITransmission = 0x11FB0, kDragTransmissionVtable = 0x3E3560, kTransmissionShift = 0xC;
+constexpr uint32_t kEngineFromTransmission = 0x50;
+constexpr uint32_t kEngineRpm = 0x184, kEngineInfo = 0x150, kInfoRedline = 0x58, kEngineGear = 0x88;
+constexpr uint32_t kEngineClutch = 0x19C;
+constexpr uint32_t kFirstGear = 2;
+constexpr float kShiftAt = 0.97f;  // of the redline: a perfect shift; sitting on it blows a drag car's engine
+constexpr uint64_t kShiftRetryMs = 600;
+
+uint64_t SteadyMs() {
+    using namespace std::chrono;
+    return uint64_t(duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
+}
+
+float GuestF32(uint32_t va) {
+    uint32_t v = kernel::R32(va);
+    float f;
+    std::memcpy(&f, &v, sizeof(f));
+    return f;
+}
+}  // namespace
+
+namespace game {
+void DragShiftFrame(X86Context& ctx) {
+    if (!Opt().cheat_drag_shift || !Racing()) return;
+    uint32_t list = kernel::R32(kPlayers);
+    uint32_t player = kernel::R32(kPlayerCount) && list ? kernel::R32(list) : 0;
+    uint32_t object = player ? kernel::R32(player + 4) : 0;
+    if (!object) return;
+    struct Restore {
+        X86Context& destination;
+        X86Context saved;
+        ~Restore() { destination = saved; }
+    } restore{ctx, ctx};
+    ctx.ecx = object;
+    uint32_t transmission = kernel::CallGuest(ctx, kFindInterface, {kITransmission});
+    if (!transmission || kernel::R32(transmission) != kDragTransmissionVtable) return;
+    uint32_t engine = transmission - kEngineFromTransmission;
+    uint32_t info = kernel::R32(engine + kEngineInfo);
+    if (!mem::IsCommitted(info + kInfoRedline)) return;
+    static uint32_t last_gear = ~0u;
+    static uint64_t sent_ms = 0;
+    uint32_t gear = kernel::R32(engine + kEngineGear);
+    float rpm = GuestF32(engine + kEngineRpm), redline = GuestF32(info + kInfoRedline);
+    uint64_t now = SteadyMs();
+    if (gear != last_gear) {
+        LOGI("drag shift: gear %u, rpm %.0f, redline %.0f", gear, rpm, redline);
+        last_gear = gear;
+        sent_ms = 0;
+    }
+    if (gear < kFirstGear || kernel::R32(engine + kEngineClutch) != 0) return;
+    if (!(redline > 0) || rpm < redline * kShiftAt) return;
+    if (sent_ms && now - sent_ms < kShiftRetryMs) return;
+    sent_ms = now;
+    ctx.ecx = transmission;
+    uint32_t done = kernel::CallGuest(ctx, kernel::R32(kDragTransmissionVtable + kTransmissionShift), {gear + 1}) & 0xFF;
+    LOGI("drag shift: up from gear %u, rpm %.0f: %s", gear, rpm, done ? "shifted" : "refused");
+}
+}  // namespace game
+
+// NO TRAFFIC: AITrafficManager's update (0x35A50, thiscall, the time step) spawns traffic only while the density
+// 0x22CC0 gives (cdecl, a float on the x87 stack) is above 0. The game gives 0 itself in a pursuit; with the cheat on
+// it is always 0. The cars already about (switched on in a race) are let go as the update lets go of the ones it no
+// longer keeps (0x35B41): each active car in its list (+0x94, a ring of nodes, the car at +8; IsActive vtable +0x88)
+// has its AI (vtable +0xAC) told to leave (vtable +0x8C)
+namespace {
+constexpr uint32_t kTrafficCars = 0x94, kNodeCar = 8;
+constexpr uint32_t kCarIsActive = 0x88, kCarAi = 0xAC, kAiLeave = 0x8C;
+uint32_t VCall(X86Context& ctx, uint32_t self, uint32_t slot) {
+    ctx.ecx = self;
+    return kernel::CallGuest(ctx, kernel::R32(kernel::R32(self) + slot), {});
+}
+}  // namespace
+
+X86_EXTERN_FUNC(__imp__sub_00022CC0);
+X86_FUNC(sub_00022CC0) {
+    __imp__sub_00022CC0(ctx, base);
+    if (game::Opt().cheat_no_traffic) X87_ST(0) = 0.0;
+}
+
+X86_EXTERN_FUNC(__imp__sub_00035A50);
+X86_FUNC(sub_00035A50) {
+    uint32_t manager = ctx.ecx;
+    __imp__sub_00035A50(ctx, base);
+    if (!game::Opt().cheat_no_traffic) return;
+    struct Restore {
+        X86Context& destination;
+        X86Context saved;
+        ~Restore() { destination = saved; }
+    } restore{ctx, ctx};
+    uint32_t head = kernel::R32(manager + kTrafficCars);
+    if (!head) return;
+    int released = 0;
+    for (uint32_t node = kernel::R32(head); node && node != head; node = kernel::R32(node)) {
+        uint32_t car = kernel::R32(node + kNodeCar);
+        if (!car || !(VCall(ctx, car, kCarIsActive) & 0xFF)) continue;
+        if (uint32_t ai = VCall(ctx, car, kCarAi)) {
+            VCall(ctx, ai, kAiLeave);
+            released++;
+        }
+    }
+    if (released) LOGI("no traffic: %d cars let go", released);
+}
+
+// The drag races' traffic is not the manager's: a script activity spawns it a car at a time as the race goes on
+// (0x181120, thiscall, no arguments, true once done; its state at +0x4C, 1 until the car is made). In state 1 it reads
+// the car's model from its attributes (+4, 0x490A0 with the key 0xF833C06F and 0, the string at the answer) and gives
+// the car traffic's AI, or a cop's for "copmidsize" (0x18117D). With the cheat on a car that is not a cop is never
+// made: the activity stays in state 1, which the race does not wait on (its cars came seconds into the race)
+namespace {
+constexpr uint32_t kSpawnState = 0x4C, kSpawnAttributes = 4, kAttribute = 0x490A0, kModelKey = 0xF833C06F;
+constexpr uint8_t kSpawnMaking = 1;
+}  // namespace
+
+X86_EXTERN_FUNC(__imp__sub_00181120);
+X86_FUNC(sub_00181120) {
+    uint32_t spawner = ctx.ecx;
+    uint8_t state = *static_cast<const uint8_t*>(kernel::HostPtr(spawner + kSpawnState));
+    if (game::Opt().cheat_no_traffic && state == kSpawnMaking) {
+        X86Context saved = ctx;
+        ctx.ecx = spawner + kSpawnAttributes;
+        uint32_t model = kernel::CallGuest(ctx, kAttribute, {kModelKey, 0});
+        ctx = saved;
+        const char* name = model && mem::IsCommitted(model) && kernel::R32(model)
+                               ? static_cast<const char*>(kernel::HostPtr(kernel::R32(model)))
+                               : nullptr;
+        if (name && std::strcmp(name, "copmidsize") != 0) {
+            ctx.eax = 0;
+            ctx.esp += 4;
+            return;
+        }
+    }
+    __imp__sub_00181120(ctx, base);
 }
 
 X86_EXTERN_FUNC(__imp__sub_00116230);

@@ -7,6 +7,9 @@
 #include <string>
 
 struct X86Context;
+namespace input {
+struct Pad;
+}
 
 // the game's own settings, in the settings file through app::kGame.options
 namespace game {
@@ -40,6 +43,7 @@ struct Options {
     bool rain = true;         // the falling rain, src/game/game.cpp
     bool rain_drops = true;   // the drops on the screen in the rain, the same
     bool yellow_tint = false;  // the game's yellow colour grading, src/game/game.cpp greys it when off
+    bool night_mode = false;   // night time visual mod: nocturnal grading, headlights, dark sky, src/game/game.cpp
     bool shader_preload = false;  // native/vulkan.cpp makes earlier runs' shaders and pipelines at the start
     bool motion_blur = true;   // the blur by speed and the nitrous' radial blur, src/game/game.cpp skips them when off
     // cheats, src/game/game.cpp's ApplyCheats
@@ -48,6 +52,8 @@ struct Options {
     bool cheat_cash = false;          // the career's cash kept at kCheatCash
     bool cheat_no_police = false;     // no new cops or pursuits
     bool cheat_unlock_all = false;    // every car, part and race unlocked
+    bool cheat_no_traffic = false;    // no traffic cars, src/game/game.cpp
+    bool cheat_drag_shift = false;    // the gears shift by themselves in drag races, from the next race
     bool skip_movies = false;         // the movies end as they start, src/game/game.cpp
     uint32_t audio_output = 0;  // audio::kOutputAuto, kOutputStereo, kOutputSurround or kOutputMono
     std::string language = "int";  // one of kLanguages
@@ -60,6 +66,9 @@ const std::string& BootLanguage();
 bool LanguageAvailable(const std::string& code);  // src/game/game.cpp: the LANGUAGE row offers it
 inline std::atomic<uint32_t> g_road_reflection{0};  // the road reflection target's data, virtual; game.cpp, each present
 inline std::atomic<uint32_t> g_env_cube{0};         // the cars' reflection cube's data, the same
+inline std::atomic<uint32_t> g_sky_clouds_a_data{0}; // night mode starry sky replacement targets
+inline std::atomic<uint32_t> g_sky_clouds_b_data{0};
+uint32_t TextureDataFromInfo(uint32_t info);
 inline std::atomic<bool> g_focus_paused{false};  // the game thread waits while the app is in the background
 inline std::atomic<uint32_t> g_focus_pauses{0};  // focus pauses ended so far
 void WaitWhileUnfocused();  // native/game_host.cpp: game thread, before the present
@@ -69,5 +78,12 @@ void ApplyCheats();            // src/game/game.cpp: game thread, at each presen
 bool Racing();    // src/game/game.cpp, any thread: the game flow is in a race (free roam too), not loading or the front end
 inline std::atomic<bool> g_reset_car{false};  // native/touch.cpp's RESET, taken by ResetCarFrame
 void ResetCarFrame(X86Context& ctx);          // src/game/game.cpp: game thread, at each present
+void DragShiftFrame(X86Context& ctx);   // src/game/game.cpp: game thread, at each present
+// cinematic mode (src/game/cinematic.cpp): the pause menu's icon asks for it, the next frame enters
+void CinematicRequest(bool from_pause_menu = false);  // from the menu: leaving opens the pause menu again
+bool CinematicActive();
+bool CinematicPad(int port, const input::Pad& pad);  // the pad filter: true while the camera has the pad
+void DrawCinematicHud();                             // inside the ImGui frame: its menu, Start shows and hides it
+bool CinematicMenuHit(float x, float y);             // screen pixels on its menu: the touch controls leave them
 
 }  // namespace game

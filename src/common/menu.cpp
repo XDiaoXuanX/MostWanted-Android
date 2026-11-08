@@ -247,7 +247,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kAudioOutp
              kAntiAliasing, kFpsPosition, kFpsTemps, kStickMode, kBloom, kFog, kDonate, kGithub, kYoutube, kFpsUsage,
              kReflections, kParticles, kRain, kRainDrops, kShadows, kRoadReflections,
              kCheatNos, kCheatSpeedbreaker, kCheatCash, kCheatNoPolice, kCheatUnlockAll,
-             kSkipMovies, kYellowTint, kMotionBlur, kShaderPreload };
+             kSkipMovies, kYellowTint, kNightMode, kMotionBlur, kShaderPreload, kCheatDragShift, kCheatNoTraffic };
 
 using rows::Kind;
 using rows::Row;
@@ -277,6 +277,7 @@ constexpr Row kGraphicsRows[] = {
     {Kind::Value, kRain, "FALLING RAIN"},
     {Kind::Value, kRainDrops, "SCREEN RAINDROPS"},
     {Kind::Value, kYellowTint, "YELLOW TINT"},
+    {Kind::Value, kNightMode, "NIGHT MODE"},
     {Kind::Value, kMotionBlur, "MOTION BLUR"},
     {Kind::Value, kScreenFilter, "SCREEN FILTER"},
 };
@@ -305,6 +306,8 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kCheatCash, "MAX CASH"},
     {Kind::Value, kCheatNoPolice, "NO POLICE"},
     {Kind::Value, kCheatUnlockAll, "UNLOCK ALL"},
+    {Kind::Value, kCheatNoTraffic, "NO TRAFFIC"},
+    {Kind::Value, kCheatDragShift, "AUTO SHIFT IN DRAG"},
 };
 
 // the credits' names, an info row's id; as they are, untranslated
@@ -364,6 +367,7 @@ bool* ToggleFlag(Settings& s, int id) {
         case kRain: return &o.rain;
         case kRainDrops: return &o.rain_drops;
         case kYellowTint: return &o.yellow_tint;
+        case kNightMode: return &o.night_mode;
         case kMotionBlur: return &o.motion_blur;
         case kShaderPreload: return &o.shader_preload;
         case kCheatNos: return &o.cheat_nos;
@@ -371,6 +375,8 @@ bool* ToggleFlag(Settings& s, int id) {
         case kCheatCash: return &o.cheat_cash;
         case kCheatNoPolice: return &o.cheat_no_police;
         case kCheatUnlockAll: return &o.cheat_unlock_all;
+        case kCheatDragShift: return &o.cheat_drag_shift;
+        case kCheatNoTraffic: return &o.cheat_no_traffic;
         case kSkipMovies: return &o.skip_movies;
         default: return nullptr;
     }
@@ -530,6 +536,8 @@ void RestoreDefaults(int page) {
         o.cheat_cash = none.cheat_cash;
         o.cheat_no_police = none.cheat_no_police;
         o.cheat_unlock_all = none.cheat_unlock_all;
+        o.cheat_drag_shift = none.cheat_drag_shift;
+        o.cheat_no_traffic = none.cheat_no_traffic;
         Changed();
         return;
     }
@@ -1099,6 +1107,7 @@ void DrawFpsCounter(double fps) {
 
 void DrawUi(double fps) {
     DrawFpsCounter(fps);
+    game::DrawCinematicHud();
     ImGuiIO& io = ImGui::GetIO();
     if (MenuOpen()) io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
     else io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;

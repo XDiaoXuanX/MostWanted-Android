@@ -21,6 +21,7 @@
 #include "common/aspect.h"
 #include "common/fe_mouse.h"
 #include "common/options.h"
+#include "common/translations.h"
 #include "cpu/x86_context.h"
 #include "kernel/kernel.h"
 #include "kernel/memory.h"
@@ -145,21 +146,24 @@ constexpr uint32_t kButtonObject = 1u << 28;
 constexpr uint32_t kSetCurrentButton = 0x15CB30;
 constexpr int kMaxKeys = 2000;  // the package's objects, both of its pages
 
-bool KeyboardPackage(uint32_t p) {
+// the package's name (Keyboard.fng, Pause_Performance_Tuning.fng) begins with prefix
+bool PackageNamed(uint32_t p, std::string_view prefix) {
     uint32_t name = Peek(p + kPackageName);
-    char head[8] = {};
-    for (uint32_t i = 0; name && i < 8 && mem::IsCommitted(name + i); i++) head[i] = char(kernel::G<uint8_t>(name + i));
-    return std::memcmp(head, "Keyboard", 8) == 0;
+    for (uint32_t i = 0; i < prefix.size(); i++)
+        if (!name || !mem::IsCommitted(name + i) || char(kernel::G<uint8_t>(name + i)) != prefix[i]) return false;
+    return true;
 }
+bool KeyboardPackage(uint32_t p) { return PackageNamed(p, "Keyboard"); }
 
 // The keys are in groups, which FEngTestForIntersection leaves out (it tests an object's own place, in its group's
 // units): a key is tested as drawn, by its cached render object's (+0x58) transform in the front end's 640x480 (its
-// size at +0x30 and +0x44, its middle at +0x60 and +0x64). That 640x480 is drawn into the middle 576x448 of FEng's
-// screen (the screen transform, 0x0D4888: 576 / width across and 448 / 480 down), times the front end's scale at
-// 0x427BFC (the profile's, 1 on the disc's defaults)
+// size at +0x30 and +0x44, its middle at +0x60 and +0x64). That 640x480 is drawn into the middle of FEng's screen by
+// the screen transform (0x0D4888: 0x3D3534 / width across and 0x3D3530 / 480 down; the console's 576 and 448, made
+// 640 and 480 by game.cpp's FullFrameFrontEnd), times the front end's scale at 0x427BFC (the profile's, 1 on the
+// disc's defaults)
 constexpr uint32_t kRenderObject = 0x58;
 constexpr uint32_t kRenderWidth = 0x30, kRenderHeight = 0x44, kRenderX = 0x60, kRenderY = 0x64;
-constexpr float kSafeAcross = 576.0f / 640.0f, kSafeDown = 448.0f / 480.0f;
+constexpr uint32_t kSafeWidth = 0x3D3534, kSafeHeight = 0x3D3530;
 constexpr uint32_t kFeScale = 0x427BFC;
 
 float PeekFloat(uint32_t va) {
@@ -194,7 +198,10 @@ uint32_t PickKey(X86Context& ctx, uint32_t p) {
     float aspect = Aspect(), across = aspect >= 1.5f ? 1.0f : 480.0f * aspect / 640.0f;
     float scale = PeekFloat(kFeScale);
     if (!(scale > 0.1f && scale < 2.0f)) scale = 1.0f;
-    float x = float(g_x) / (kSafeAcross * across * scale) + 320.0f, y = float(g_y) / (kSafeDown * scale) + 240.0f;
+    float safe_across = PeekFloat(kSafeWidth) / 640.0f, safe_down = PeekFloat(kSafeHeight) / 480.0f;
+    if (!(safe_across > 0.5f && safe_across <= 1.0f)) safe_across = 1.0f;
+    if (!(safe_down > 0.5f && safe_down <= 1.0f)) safe_down = 1.0f;
+    float x = float(g_x) / (safe_across * across * scale) + 320.0f, y = float(g_y) / (safe_down * scale) + 240.0f;
     uint32_t key = KeyAt(x, y, Peek(p + kPackageObjects), -1, budget);
     if (!key || key == kernel::R32(p + kCurrentButton)) return key;
     uint32_t ecx = ctx.ecx;
@@ -299,6 +306,14 @@ void FeFrame() {
     if (menu && KeyboardPackage(menu)) {
         for (int i = 2; i < kFePromptCount; i++) prompts.shown[i] = false;  // A and B stay, ENTER and CLOSE
         prompts.right_stick = false;
+    }
+    // the pause menu's PERFORMANCE TUNING: L and R flank the setting's name ("Setting 1") and step through the three
+    // settings. The scan took that name for L's label and found none for R, and its numbers made the touch triggers
+    // the map's zoom; they are the settings' steps
+    if (menu && PackageNamed(menu, "Pause_Performance_Tuning")) {
+        prompts.shown[kFePromptLT] = prompts.shown[kFePromptRT] = true;
+        prompts.label[kFePromptLT] = app::Ui("PREV");
+        prompts.label[kFePromptRT] = app::Ui("NEXT");
     }
     g_package = menu;
     g_menu = menu != 0;
