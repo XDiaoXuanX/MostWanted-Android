@@ -570,8 +570,16 @@ std::atomic<int> g_pad_capture{-1};
 bool g_pad_capture_armed = false;
 std::chrono::steady_clock::time_point g_pad_capture_since;
 constexpr std::chrono::seconds kPadCaptureTimeout{5};
-// the panel shows the cheats alone; the settings are the game's own options menu (src/game/options_menu.cpp)
-constexpr int g_page = kCheatsPage;
+
+// the panel's tabs: DEBUG shows its own size controls and a few numbers, CHEATS the game's cheats, MY MUSIC the songs
+enum PanelTab { kPanelDebug, kPanelCheats, kPanelMusic };
+PanelTab g_panel_tab = kPanelDebug;  // DEBUG first, the panel resizing itself
+
+// the panel's own size, as percentages of its default em*80 x em*50; kept within the screen when drawn
+constexpr uint32_t kPanelSizes[] = {40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 175, 200, 250, 300};
+uint32_t g_panel_width_percent = 100;
+uint32_t g_panel_height_percent = 100;
+
 // the action's key and its alternate as their boxes show them, the alternate blank when there is none
 std::vector<std::string> KeyBoxes(size_t action) {
     std::string keys = input::Binding(action);
@@ -752,15 +760,79 @@ void DrawRows(int page) {
     }
 }
 
+// Defaults on the footer: the panel's own size back to its default on the DEBUG tab, the cheats on CHEATS, nothing on
+// MY MUSIC
 void Defaults() {
     g_capture = -1;
     g_pad_capture = -1;
-    RestoreDefaults(g_page);
+    if (g_panel_tab == kPanelDebug) {
+        g_panel_width_percent = 100;
+        g_panel_height_percent = 100;
+    } else if (g_panel_tab == kPanelCheats) {
+        RestoreDefaults(kCheatsPage);
+    }
 }
 
-bool g_music_tab = false;
+// a panel size row: the label left, arrows and "NN%" right, stepped through kPanelSizes
+void PanelPercentRow(const char* label, uint32_t& value) {
+    char text[32];
+    std::snprintf(text, sizeof(text), "%u%%", value);
+    int step = OptionRow(label, text);
+    if (step) StepTable(kPanelSizes, value, step);
+}
 
-// the panel's two pages, one button each, the open one lit
+// the panel's effective pixel size for a given percentage, clamped to the viewport with a small inset
+ImVec2 PanelPixelSize(float em, uint32_t width_percent, uint32_t height_percent) {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    const float inset = std::max(em * 0.5f, 6.0f);
+    const float max_w = std::max(vp->Size.x - inset * 2.0f, 1.0f);
+    const float max_h = std::max(vp->Size.y - inset * 2.0f, 1.0f);
+    return ImVec2(std::min(em * 80.0f * width_percent / 100.0f, max_w),
+                  std::min(em * 50.0f * height_percent / 100.0f, max_h));
+}
+
+// The DEBUG tab: the panel's own size (step rows and presets), then a few numbers
+void DrawDebug(float em) {
+    Section("PANEL SIZE");
+    ImGui::PushStyleColor(ImGuiCol_Text, kDim);
+    ImGui::TextWrapped("Scale this panel up or down. Values are percentages of its default size, kept within the "
+                       "screen.");
+    ImGui::PopStyleColor();
+    ImGui::Dummy(ImVec2(0, em * 0.3f));
+
+    PanelPercentRow("PANEL WIDTH", g_panel_width_percent);
+    PanelPercentRow("PANEL HEIGHT", g_panel_height_percent);
+
+    ImGui::Dummy(ImVec2(0, em * 0.4f));
+    const float bw = em * 7;
+    if (ImGui::Button("SMALL", ImVec2(bw, 0))) {
+        g_panel_width_percent = 60;
+        g_panel_height_percent = 70;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("DEFAULT", ImVec2(bw + em, 0))) {
+        g_panel_width_percent = 100;
+        g_panel_height_percent = 100;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("FULL", ImVec2(bw, 0))) {
+        g_panel_width_percent = 300;
+        g_panel_height_percent = 300;
+    }
+
+    Section("INFO");
+    const ImGuiIO& io = ImGui::GetIO();
+    ImGui::Text("FPS: %.0f", io.Framerate);
+    ImGui::Text("Screen: %.0f x %.0f", io.DisplaySize.x, io.DisplaySize.y);
+    ImGui::Text("Font: %.1f px", em);
+    const ImVec2 px = PanelPixelSize(em, g_panel_width_percent, g_panel_height_percent);
+    ImGui::Text("Panel: %.0f x %.0f", px.x, px.y);
+    ImGui::PushStyleColor(ImGuiCol_Text, kDim);
+    ImGui::TextWrapped("DEBUG is the panel's title tab; CHEATS and MY MUSIC switch to the other views.");
+    ImGui::PopStyleColor();
+}
+
+// the panel's three tabs, one button each, the open one lit
 void DrawTitle(float em) {
     auto tab = [&](const char* label, bool open) {
         if (open) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
@@ -768,9 +840,11 @@ void DrawTitle(float em) {
         if (open) ImGui::PopStyleColor();
         return pressed;
     };
-    if (tab(Ui("CHEATS").c_str(), !g_music_tab)) g_music_tab = false;
+    if (tab("DEBUG", g_panel_tab == kPanelDebug)) g_panel_tab = kPanelDebug;
     ImGui::SameLine();
-    if (tab("MY MUSIC", g_music_tab)) g_music_tab = true;
+    if (tab(Ui("CHEATS").c_str(), g_panel_tab == kPanelCheats)) g_panel_tab = kPanelCheats;
+    ImGui::SameLine();
+    if (tab("MY MUSIC", g_panel_tab == kPanelMusic)) g_panel_tab = kPanelMusic;
 }
 
 // My Music: what plays and how, then every song in the folder, with a tap to play it, where it may play and its place in the list
@@ -834,7 +908,7 @@ void DrawFooter(float em) {
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(buttons_pad, 0.0f));
     if (ImGui::Button(Ui("Back", false).c_str(), ImVec2(bw, 0))) ToggleMenu();
     ImGui::SameLine();
-    if (g_music_tab) ImGui::Dummy(ImVec2(bw, 0));
+    if (g_panel_tab == kPanelMusic) ImGui::Dummy(ImVec2(bw, 0));
     else if (ImGui::Button(Ui("Defaults", false).c_str(), ImVec2(bw, 0))) Defaults();
 }
 
@@ -864,13 +938,14 @@ void DrawPanel() {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     float em = ImGui::GetFontSize();
 
-    // auto-detect ke device: pakai ukuran desain 80x50 em, tapi di-clamp ke layar
-    // (dengan inset kecil) supaya tidak pernah keluar tepi di ponsel/tablet/window kecil
+    // auto-detect the device: the design size is 80x50 em, clamped to the screen with a small inset, so it never
+    // leaves the edge on a phone, tablet or small window; the DEBUG tab's PANEL WIDTH / PANEL HEIGHT scale it, 40 to
+    // 300 percent
     const float inset = std::max(em * 0.5f, 6.0f);
     const float max_w = std::max(vp->Size.x - inset * 2.0f, 1.0f);
     const float max_h = std::max(vp->Size.y - inset * 2.0f, 1.0f);
-    const float w = std::min(em * 80.0f, max_w);
-    const float h = std::min(em * 50.0f, max_h);
+    const float w = std::min(em * 80.0f * g_panel_width_percent / 100.0f, max_w);
+    const float h = std::min(em * 50.0f * g_panel_height_percent / 100.0f, max_h);
 
     ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
@@ -889,8 +964,9 @@ void DrawPanel() {
         float footer = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeightWithSpacing() + em;
         ImGui::BeginChild("##rows", ImVec2(0, -footer), ImGuiChildFlags_NavFlattened);
         g_hovered_box = -1;
-        if (g_music_tab) DrawMusic(em);
-        else DrawRows(g_page);
+        if (g_panel_tab == kPanelMusic) DrawMusic(em);
+        else if (g_panel_tab == kPanelDebug) DrawDebug(em);
+        else DrawRows(kCheatsPage);
         DragScroll();
         ImGui::EndChild();
         DrawFooter(em);
@@ -923,22 +999,22 @@ void PaceAt(uint32_t cap) {
     while (clock::now() < next) std::this_thread::yield();
 }
 
-// skala UI mengikuti device: DPI (kalau platform melaporkannya, mis. Android/iOS lewat
-// SDL_GetWindowDisplayScale) atau sisi terpendek layar, mana yang lebih besar.
-// 540 adalah tinggi desain untuk teks 13 px; 1.0 di window desktop biasa.
+// the UI scale follows the device: DPI (if the platform reports it, e.g. Android/iOS via SDL_GetWindowDisplayScale)
+// or the screen's shortest side, whichever is larger. 540 is the design height for 13 px text; 1.0 on a typical
+// desktop window.
 float UiScale() {
-    // DPI dari OS: 2.0 di ponsel modern, 1.0-1.5 di desktop Windows/macOS
+    // DPI from the OS: 2.0 on modern phones, 1.0-1.5 on Windows/macOS desktops
     float dpi = 1.0f;
     if (SDL_Window* w = static_cast<SDL_Window*>(Window())) {
         float s = SDL_GetWindowDisplayScale(w);
         if (s > 0.0f) dpi = s;
     }
-    // sisi terpendek: portrait 1080x2400 dan landscape 2400x1080 menghasilkan angka sama
+    // shortest side: portrait 1080x2400 and landscape 2400x1080 give the same number
     ImVec2 d = ImGui::GetIO().DisplaySize;
     float short_side = std::min(d.x, d.y);
     float from_side = std::max(1.0f, short_side / 540.0f);
-    // pilih yang paling besar, batasi 1.0..4.0 supaya window desktop tidak membengkak
-    // dan layar sangat rapat tidak membuat teks raksasa
+    // pick the largest, clamp to 1.0..4.0 so a desktop window does not balloon and very dense screens do not make
+    // giant text
     return std::clamp(std::max(from_side, dpi), 1.0f, 4.0f);
 }
 
@@ -1189,8 +1265,8 @@ void DrawUi(double fps) {
     else io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
     io.KeyRepeatRate = 0.1f;  // held arrows step ten times a second, ImGui's twenty is too fast for settings
 
-    // font & panel ikut device: DPI atau sisi terpendek layar, bukan cuma tinggi layar
-    // (rotasi portrait <-> landscape tidak melompat, kerapatan piksel dihitung)
+    // the font & panel follow the device: DPI or the screen's shortest side, not just the screen height (portrait <->
+    // landscape rotation does not jump, pixel density is calculated)
     float base = io.Fonts->Fonts.empty() ? 13.0f : io.Fonts->Fonts[0]->FontSize;
     if (base > 0.0f) io.FontGlobalScale = UiScale() * 13.0f / base;
 
