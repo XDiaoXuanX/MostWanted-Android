@@ -31,6 +31,7 @@
 
 #include "app/app.h"
 #include "common/aspect.h"
+#include "common/video.h"
 #include "core/diag.h"
 #include "core/log.h"
 #include "d3d/gpu_frame.h"
@@ -42,6 +43,7 @@
 #include "kernel/kernel.h"
 #include "kernel/memory.h"
 #include "vk_shader.h"
+
 
 namespace gpu {
 
@@ -806,6 +808,11 @@ void FillSurfaceConstants(const State& s, GuestExtent size, DrawConstants& c) {
     c.surf[1] = float(size.h);
     c.surf[2] = 1.0f / s.zscale;
     Color(s.rs[kRsFogColor], c.fog_color);
+    if (game::Opt().night_mode) {
+        c.fog_color[0] *= 0.12f;
+        c.fog_color[1] *= 0.16f;
+        c.fog_color[2] *= 0.28f;
+    }
     c.misc[0] = float(SimpleState(s, kMAlphaRef) & 0xFF);
     c.misc[1] = SimpleState(s, kMAlphaTestEnable) ? float(CmpIndex(SimpleState(s, kMAlphaFunc))) : kAlphaTestAlways;
     c.misc[2] = float(CmpIndex(s.rs[kRsShadowFunc]));
@@ -1004,6 +1011,17 @@ public:
     void SyncLate(uint32_t data) override;
     bool DeliverLate(uint32_t data) override;
     void RecordLate(uint32_t data) override;
+    // a replay saved as a video (src/common/video.h): each presented game frame, before the UI, shrunk to the video's
+    // size and read back through a ring of buffers; handed to the encoder once the GPU is done with it
+    static constexpr uint32_t kCapSlots = 3;
+    Image cap_down_;
+    Buffer cap_rb_[kCapSlots];
+    uint64_t cap_fence_[kCapSlots] = {}, cap_n_[kCapSlots] = {};
+    uint32_t cap_w_ = 0, cap_h_ = 0, cap_slot_ = 0, cap_deliver_ = 0, cap_pending_ = 0;
+    uint64_t cap_next_n_ = 0;
+    bool cap_active_ = false;
+    void CaptureVideo(Target* t);
+    void DeliverVideo(bool wait);
     void Flush() override { if (!gpu_failed_) Submit(true, false); }
     void SetGamma(const uint8_t* ramp) override {
         if (gpu_failed_) return;
@@ -1369,11 +1387,13 @@ bool VulkanBackend::CreateSurface() {
     uint32_t epoch = host::SurfaceEpoch();
     // Android has not handed the window back yet (resuming, or a surface change): wait for it without asking SDL,
     // which only fails, and log the outage once, not every present
+#ifdef __ANDROID__
     SDL_PropertiesID props = SDL_GetWindowProperties(host::Window());
     if (!SDL_GetPointerProperty(props, SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER, nullptr)) {
         if (surface_failures_++ == 0) LOGI("vulkan: waiting for Android's window");
         return false;
     }
+#endif
     if (!SDL_Vulkan_CreateSurface(host::Window(), instance_, nullptr, &surface_)) {
         surface_ = VK_NULL_HANDLE;
         if (surface_failures_++ == 0) LOGE("vulkan: no surface: %s", SDL_GetError());
@@ -1395,6 +1415,20 @@ bool VulkanBackend::PickDevice() {
     vkEnumeratePhysicalDevices(instance_, &n, nullptr);
     std::vector<VkPhysicalDevice> pds(n);
     vkEnumeratePhysicalDevices(instance_, &n, pds.data());
+#ifndef __ANDROID__
+    // a PC with two GPUs: the discrete one first, the integrated after (llvmpipe last)
+    auto rank = [](VkPhysicalDevice pd) {
+        VkPhysicalDeviceProperties p;
+        vkGetPhysicalDeviceProperties(pd, &p);
+        switch (p.deviceType) {
+            case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: return 0;
+            case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: return 1;
+            case VK_PHYSICAL_DEVICE_TYPE_CPU: return 3;
+            default: return 2;
+        }
+    };
+    std::stable_sort(pds.begin(), pds.end(), [&](VkPhysicalDevice a, VkPhysicalDevice b) { return rank(a) < rank(b); });
+#endif
     // rejections are reported, not warned: release logs drop warnings and these are what a bug report needs
     if (pds.empty()) LOGE("vulkan: the driver lists no GPU");
     for (VkPhysicalDevice pd : pds) {
@@ -1560,6 +1594,15 @@ bool VulkanBackend::CreateSwapchain() {
         w = int(caps.currentExtent.width);
         h = int(caps.currentExtent.height);
     }
+#ifndef __ANDROID__
+    // X11 and most desktop drivers fix the extent to the window's; Wayland leaves it to the app (0xFFFFFFFF)
+    if (caps.currentExtent.width != 0xFFFFFFFFu) {
+        w = int(caps.currentExtent.width);
+        h = int(caps.currentExtent.height);
+    }
+    w = std::clamp(w, int(caps.minImageExtent.width), int(std::max(caps.maxImageExtent.width, 1u)));
+    h = std::clamp(h, int(caps.minImageExtent.height), int(std::max(caps.maxImageExtent.height, 1u)));
+#endif
     if (w <= 0 || h <= 0) return false;
     vsync_ = app::Get().vsync;
     uint32_t pn = 0;
@@ -4101,6 +4144,63 @@ void VulkanBackend::SavePipelineCache() {
     cache_saved_ = size;
 }
 
+void VulkanBackend::DeliverVideo(bool wait) {
+    while (cap_pending_) {
+        uint32_t slot = cap_deliver_;
+        if (cap_fence_[slot] > Completed() && (!wait || !WaitValue(cap_fence_[slot]))) return;
+        video::Frame(cap_rb_[slot].mem.map, cap_w_, cap_h_, cap_n_[slot]);
+        cap_deliver_ = (slot + 1) % kCapSlots;
+        cap_pending_--;
+    }
+}
+
+void VulkanBackend::CaptureVideo(Target* t) {
+    if (video::Stopping()) {  // the replay is done: what is still read back goes to the encoder, then it ends
+        DeliverVideo(true);
+        video::Finish();
+    }
+    if (!video::Capturing()) {
+        if (cap_active_) {
+            for (Buffer& b : cap_rb_) Retire(b);
+            Retire(cap_down_);
+            cap_active_ = false;
+            cap_pending_ = 0;
+        }
+        return;
+    }
+    uint32_t w, h;
+    video::Size(w, h);
+    if (!cap_active_ || w != cap_w_ || h != cap_h_) {
+        for (Buffer& b : cap_rb_) Retire(b);
+        cap_w_ = w, cap_h_ = h;
+        cap_slot_ = cap_deliver_ = cap_pending_ = 0;
+        cap_next_n_ = 0;
+        cap_active_ = true;
+    }
+    DeliverVideo(false);
+    if (!t || t->depth) return;
+    if (cap_pending_ == kCapSlots) {  // the oldest, from frames already submitted, waited for
+        if (!WaitValue(cap_fence_[cap_deliver_])) return;
+        DeliverVideo(false);
+    }
+    uint32_t slot = cap_slot_;
+    if (!cap_rb_[slot].buf && !CreateBuffer(cap_rb_[slot], VkDeviceSize(w) * h * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true))
+        return;
+    uint32_t taps = std::max(1u, uint32_t(std::ceil(float(t->w) / float(w) - 1e-3f)));
+    if (!Shrink(t->img, w, h, cap_down_, taps)) return;
+    EndRender();
+    VkBufferImageCopy c{0, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {w, h, 1}};
+    vkCmdCopyImageToBuffer(Cb(), cap_down_.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, cap_rb_[slot].buf, 1, &c);
+    VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    mb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    vkCmdPipelineBarrier(Cb(), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, nullptr, 0, nullptr);
+    cap_fence_[slot] = value_ + 1;  // the next Submit carries it
+    cap_n_[slot] = cap_next_n_++;
+    cap_slot_ = (slot + 1) % kCapSlots;
+    cap_pending_++;
+}
+
 void VulkanBackend::Present(const Surface& front) {
     if (gpu_failed_) return;
     Target* t = EnsureTarget(front, false);
@@ -4109,6 +4209,7 @@ void VulkanBackend::Present(const Surface& front) {
         presented_[0] = t->data;
     }
     if (t && LatchCpuWrite(*t)) UploadTarget(*t, front);
+    if (cap_active_ || video::Busy()) CaptureVideo(t);
     if (ramp_dirty_) UploadGammaRamp();
     if (gpu_failed_) return;
     uint32_t index = 0;

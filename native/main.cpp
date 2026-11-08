@@ -29,6 +29,7 @@
 #include "app/app.h"
 #include "build_info.h"
 #include "common/aspect.h"
+#include "common/music.h"
 #include "common/translations.h"
 #include "core/input.h"
 #include "core/log.h"
@@ -448,6 +449,15 @@ int main(int, char**) {
     if (app::kGame.window) app::kGame.window(g_window);
     std::filesystem::path hdd = HddDir();
     LOGR("app: saves in %s", hdd.c_str());
+    saves::Guard(hdd);
+    // what tools/car_mod.py wrote is read instead of the disc's files
+    std::filesystem::path mods = std::filesystem::path(host::kShared) / "mods";
+    std::error_code mods_ec;
+    if (std::filesystem::is_directory(mods, mods_ec)) {
+        kernel::SetDiscOverlay(mods.string());
+        LOGR("app: mods in %s", mods.c_str());
+    }
+    music::Start((std::filesystem::path(host::kShared) / "music").string());
     if (!kernel::Boot(std::move(game.xbe), IMAGE_XBE, game.dir.string(), hdd.string())) {
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, Utf8(app::kGame.short_title).c_str(),
                                  app::Ui("The game failed to start, see the log in the logs folder.", false).c_str(),

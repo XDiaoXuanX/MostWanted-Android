@@ -104,8 +104,61 @@ def android():
     return img
 
 
-# in the sections' order: graphics, controls, general, and the Android Options menu that holds them
-ICONS = [monitor, phone, sliders, android]
+def tux():
+    # Tux, the Linux penguin: head and body with the white belly cut out, eyes, beak, flippers and feet, for the
+    # Linux build's menu that holds the rest
+    img, d = canvas()
+    d.ellipse(p(19, 34, 27, 54), fill=255)  # the flippers
+    d.ellipse(p(55, 34, 63, 54), fill=255)
+    d.ellipse(p(24, 25, 58, 61), fill=255)  # the body
+    d.ellipse(p(29, 12, 53, 36), fill=255)  # the head
+    d.ellipse(p(30.5, 33, 51.5, 58), fill=0)  # the belly
+    d.ellipse(p(33.5, 17.5, 39.5, 25.5), fill=0)  # the eyes, their pupils
+    d.ellipse(p(42.5, 17.5, 48.5, 25.5), fill=0)
+    d.ellipse(p(36, 20.5, 39, 24.5), fill=255)
+    d.ellipse(p(43, 20.5, 46, 24.5), fill=255)
+    d.ellipse(p(34.5, 26.5, 47.5, 33), fill=0)  # the beak, outlined
+    d.ellipse(p(36.5, 27.8, 45.5, 31.6), fill=255)
+    d.ellipse(p(22, 54.5, 39, 62.5), fill=0)  # the feet, a gap round them
+    d.ellipse(p(43, 54.5, 60, 62.5), fill=0)
+    d.ellipse(p(23, 55.5, 38, 62), fill=255)
+    d.ellipse(p(44, 55.5, 59, 62), fill=255)
+    return img
+
+
+def camera():
+    # a photo camera, its lens in rings, for the pause menu's CINEMATIC MODE
+    img, d = canvas()
+    rrect(d, (28, 21, 42, 30), 2)  # the viewfinder's hump
+    rrect(d, (18, 26, 63, 57), 5)  # the body
+    cx, cy = 42, 42
+    for r, fill in ((12.5, 0), (10, 255), (7, 0), (4.2, 255)):  # the lens
+        d.ellipse(p(cx - r, cy - r, cx + r, cy + r), fill=fill)
+    d.ellipse(p(cx - 2.8, cy - 3.2, cx - 0.6, cy - 1), fill=0)  # its glint
+    rrect(d, (53, 30, 59, 34), 1, fill=0)  # the flash
+    return img
+
+
+def replay():
+    # a play mark in a ring that turns back on itself, its arrowhead at the top: the pause menu's REPLAY
+    img, d = canvas()
+    cx, cy, r, w = 41, 40, 19, 4.5
+    d.arc(p(cx - r, cy - r, cx + r, cy + r), start=-60, end=230, fill=255, width=int(w * SCALE))
+    # the arrowhead at the arc's open end, pointing round it
+    a = math.radians(-60)
+    ex, ey = cx + r * math.cos(a), cy + r * math.sin(a)
+    tx, ty = -math.sin(a), math.cos(a)  # along the arc, the way it turns back
+    nx, ny = math.cos(a), math.sin(a)
+    h = 7.5
+    d.polygon(p(ex - tx * h * 0.9, ey - ty * h * 0.9, ex + nx * h, ey + ny * h, ex - nx * h, ey - ny * h), fill=255)
+    d.polygon(p(cx - 5.5, cy - 8, cx - 5.5, cy + 8, cx + 8.5, cy), fill=255)  # the play mark
+    return img
+
+
+# in the sections' order: graphics, controls, general, and the menu that holds them, Android's Options (3) or on
+# Linux its Linux Options (4); then the pause menu's CINEMATIC MODE (5) and REPLAY (6, src/game/options_menu.cpp's
+# IconOf)
+ICONS = [monitor, phone, sliders, android, tux, camera, replay]
 
 
 def compose(subject):

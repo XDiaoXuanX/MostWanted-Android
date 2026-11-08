@@ -22,9 +22,13 @@
 /iso/
 /Iso/
 /extracted/
+/mods/
 
 # runtime files
 mostwanted.toml
+android.toml
+layout.toml
+/shadercache/
 /logs/
 /hdd/
 /CrashDumps/
@@ -36,3 +40,6 @@ mostwanted.toml
 
 # Local temporary folder
 .local
+
+# livery studio
+/studio/
