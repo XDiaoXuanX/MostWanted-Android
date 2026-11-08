@@ -14,7 +14,7 @@
 
 #include <SDL3/SDL.h>
 #include <imgui.h>
-#include <imgui_internal.h>  // ClearActiveID, the drag scroll's
+#include <imgui_internal.h>  // ClearActiveID, GetActiveID, the drag scroll's
 
 #include "app/app.h"
 #include "audio/output.h"
@@ -580,6 +580,14 @@ constexpr uint32_t kPanelSizes[] = {40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 
 uint32_t g_panel_width_percent = 100;
 uint32_t g_panel_height_percent = 100;
 
+// the panel is dragged from any empty spot: its top-left corner, its start-of-drag values, and whether a drag is
+// running; the first open centres it, after that it stays where the user dropped it (kept within the screen)
+bool g_panel_placed = false;
+ImVec2 g_panel_pos{0, 0};
+bool g_panel_dragging = false;
+ImVec2 g_panel_drag_start{0, 0};   // the mouse's place when the drag began
+ImVec2 g_panel_drag_origin{0, 0};  // the panel's top-left when the drag began
+
 // the action's key and its alternate as their boxes show them, the alternate blank when there is none
 std::vector<std::string> KeyBoxes(size_t action) {
     std::string keys = input::Binding(action);
@@ -791,7 +799,7 @@ ImVec2 PanelPixelSize(float em, uint32_t width_percent, uint32_t height_percent)
                   std::min(em * 50.0f * height_percent / 100.0f, max_h));
 }
 
-// The DEBUG tab: the panel's own size (step rows and presets), then a few numbers
+// The DEBUG tab: the panel's own size (step rows and presets), a CENTER button, then a few numbers
 void DrawDebug(float em) {
     Section("PANEL SIZE");
     ImGui::PushStyleColor(ImGuiCol_Text, kDim);
@@ -820,13 +828,20 @@ void DrawDebug(float em) {
         g_panel_height_percent = 300;
     }
 
+    ImGui::Dummy(ImVec2(0, em * 0.3f));
+    if (ImGui::Button("CENTER PANEL", ImVec2(em * 14, 0))) g_panel_placed = false;  // recentres next draw
+    ImGui::PushStyleColor(ImGuiCol_Text, kDim);
+    ImGui::TextWrapped("Drag any empty spot inside the panel to move it anywhere on the screen. Tabs, rows and "
+                       "buttons still work as before; only truly empty space starts a drag.");
+    ImGui::PopStyleColor();
+
     Section("INFO");
     const ImGuiIO& io = ImGui::GetIO();
     ImGui::Text("FPS: %.0f", io.Framerate);
     ImGui::Text("Screen: %.0f x %.0f", io.DisplaySize.x, io.DisplaySize.y);
     ImGui::Text("Font: %.1f px", em);
     const ImVec2 px = PanelPixelSize(em, g_panel_width_percent, g_panel_height_percent);
-    ImGui::Text("Panel: %.0f x %.0f", px.x, px.y);
+    ImGui::Text("Panel: %.0f x %.0f  @ %.0f, %.0f", px.x, px.y, g_panel_pos.x, g_panel_pos.y);
     ImGui::PushStyleColor(ImGuiCol_Text, kDim);
     ImGui::TextWrapped("DEBUG is the panel's title tab; CHEATS and MY MUSIC switch to the other views.");
     ImGui::PopStyleColor();
@@ -898,6 +913,7 @@ void DrawFooter(float em) {
     const char* hint = "";
     if (g_capture >= 0) hint = "Press a key or mouse button to bind, Escape cancels";
     else if (g_pad_capture >= 0) hint = "Press a button on the controller to bind, wait 5 seconds to cancel";
+    else if (g_panel_dragging) hint = "Move the mouse or finger to place the panel";
     ImGui::TextUnformatted(Ui(hint, false).c_str());
     ImGui::PopStyleColor();
     float bw = em * 8;
@@ -913,9 +929,14 @@ void DrawFooter(float em) {
 }
 
 // The rows a finger drags up or down scroll with it, as a phone's lists do: the row it came down on is let go, so the
-// drag presses nothing. A drag of the scrollbar itself stays the scrollbar's.
+// drag presses nothing. A drag of the scrollbar itself stays the scrollbar's. While the panel itself is being dragged,
+// this stays out of the way.
 void DragScroll() {
     static bool dragging = false;
+    if (g_panel_dragging) {
+        dragging = false;
+        return;
+    }
     const ImGuiIO& io = ImGui::GetIO();
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
         dragging = false;
@@ -947,7 +968,16 @@ void DrawPanel() {
     const float w = std::min(em * 80.0f * g_panel_width_percent / 100.0f, max_w);
     const float h = std::min(em * 50.0f * g_panel_height_percent / 100.0f, max_h);
 
-    ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    // first open: centred; after: wherever the user dragged it, always kept within the screen
+    if (!g_panel_placed) {
+        ImVec2 c = vp->GetCenter();
+        g_panel_pos = ImVec2(c.x - w * 0.5f, c.y - h * 0.5f);
+        g_panel_placed = true;
+    }
+    g_panel_pos.x = std::clamp(g_panel_pos.x, inset, std::max(vp->Size.x - w - inset, inset));
+    g_panel_pos.y = std::clamp(g_panel_pos.y, inset, std::max(vp->Size.y - h - inset, inset));
+
+    ImGui::SetNextWindowPos(g_panel_pos, ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
     for (const auto& [col, color] : kPanelColors) ImGui::PushStyleColor(col, color);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
@@ -958,7 +988,8 @@ void DrawPanel() {
     ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, em * 1.4f);
     ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, em * 2.0f);
     constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
-                                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoTitleBar;
+                                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoTitleBar |
+                                        ImGuiWindowFlags_NoMove;  // moving is hand-rolled below
     if (ImGui::Begin("##settings", nullptr, kFlags)) {
         DrawTitle(em);
         float footer = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeightWithSpacing() + em;
@@ -970,6 +1001,27 @@ void DrawPanel() {
         DragScroll();
         ImGui::EndChild();
         DrawFooter(em);
+
+        // Drag from anywhere: pressing on an empty spot inside the panel starts a drag, while interactive widgets
+        // keep their own input since they set ImGui's active id on press. The check runs after all items (so the
+        // active id is settled for this frame) and DragScroll already ran above, so a touch drag on empty space moves
+        // the panel rather than scrolling.
+        if (!g_panel_dragging && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+            ImGui::IsMouseClicked(ImGuiMouseButton_Left) && ImGui::GetActiveID() == 0) {
+            g_panel_dragging = true;
+            g_panel_drag_start = ImGui::GetIO().MousePos;
+            g_panel_drag_origin = g_panel_pos;
+        }
+        if (g_panel_dragging) {
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                ImVec2 m = ImGui::GetIO().MousePos;
+                g_panel_pos.x = g_panel_drag_origin.x + (m.x - g_panel_drag_start.x);
+                g_panel_pos.y = g_panel_drag_origin.y + (m.y - g_panel_drag_start.y);
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+            } else {
+                g_panel_dragging = false;
+            }
+        }
     }
     ImGui::End();
     ImGui::PopStyleVar(6);
@@ -1190,6 +1242,7 @@ void ToggleMenu() {
     g_open.store(open, std::memory_order_relaxed);
     g_capture = -1;
     g_pad_capture = -1;
+    g_panel_dragging = false;  // a drag left running when the panel goes away is no drag
     if (open) input::ReleaseCursor();
 }
 
