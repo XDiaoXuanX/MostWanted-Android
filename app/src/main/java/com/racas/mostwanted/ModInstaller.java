@@ -114,10 +114,19 @@ final class ModInstaller {
     }
 
     private static Installed install(Context context, File game, File archive, File spool, String pageTitle, Consumer<String> log) throws Exception {
-        Map<String, File> files = ModArchive.read(archive, spool);
+        Map<String, File> files = ModArchive.read(archive, spool, log);
         List<String> paths = CarConverter.carPaths(files.keySet());
-        if (paths.isEmpty()) throw new CarConverter.Failure(CarConverter.Failure.Reason.NO_CAR, "no <name>/GEOMETRY.BIN with a TEXTURES.BIN beside it");
         Installed result = new Installed();
+        // texture packs (TexturePacks), each a folder of its own; the cars' files are not touched by them
+        if (!TexturePacks.packPaths(files.keySet()).isEmpty()) {
+            result.done.addAll(TexturePacks.install(context, files, log));
+            if (paths.isEmpty()) {
+                if (result.done.isEmpty()) throw new CarConverter.Failure(CarConverter.Failure.Reason.NO_CAR, "a texture pack whose images are not in it");
+                return result;
+            }
+        }
+        if (paths.isEmpty()) throw new CarConverter.Failure(CarConverter.Failure.Reason.NO_CAR, "no <name>/GEOMETRY.BIN with a TEXTURES.BIN beside it");
+        int packs = result.done.size();
         CarConverter.Failure first = null;
         try (CarConverter.Disc disc = new CarConverter.Disc(game)) {
             for (String path : paths) {
@@ -141,7 +150,10 @@ final class ModInstaller {
                 }
             }
         }
-        if (result.done.isEmpty()) throw first;
+        if (result.done.size() == packs) {  // no car went in
+            if (packs == 0) throw first;
+            return result;
+        }
         rebuild(context, game, log);
         return result;
     }
@@ -203,10 +215,17 @@ final class ModInstaller {
     }
 
     static void uninstall(Context context, String car, Consumer<String> log) throws Exception {
-        File dir = new File(new File(modsDir(), GARAGE), car);
-        File[] files = dir.listFiles();
-        if (files != null) for (File f : files) f.delete();
-        dir.delete();
+        uninstall(context, java.util.Collections.singletonList(car), log);
+    }
+
+    // several at once: the game's files are made again once, from what is left
+    static void uninstall(Context context, List<String> cars, Consumer<String> log) throws Exception {
+        for (String car : cars) {
+            File dir = new File(new File(modsDir(), GARAGE), car);
+            File[] files = dir.listFiles();
+            if (files != null) for (File f : files) f.delete();
+            dir.delete();
+        }
         File game = findGame(context);
         if (game == null) throw new IOException("no game");
         rebuild(context, game, log);
@@ -314,7 +333,7 @@ final class ModInstaller {
     }
 
     // it has the disc's list in memory and would read the new archive by it
-    private static void stopGame(Context context) {
+    static void stopGame(Context context) {
         int pid = gamePid(context);
         if (pid != 0) Process.killProcess(pid);
     }

@@ -24,6 +24,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.widget.CheckBox;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
@@ -40,13 +41,14 @@ import java.util.List;
 import java.util.Locale;
 
 // Mods Loader: add-on cars, an icon of its own in a process of its own (the game's libraries stay out of it). The player
-// downloads a car from nfsaddons.com in their own browser and installs the archive here, through the file picker or by
-// opening it with this app; nothing here fetches anything.
+// downloads a car from nfsaddons.com or nfsmods.xyz in their own browser and installs the archive here, through the file
+// picker or by opening it with this app; nothing here fetches anything.
 public class ModsActivity extends Activity {
     private static final String TAG = "MostWantedMods";
     private static final String SITE = "https://www.nfsaddons.com/downloads/nfsmw/cars/";
+    private static final String SITE2 = "https://nfsmods.xyz/";
     private static final int PICK = 0x4D4F;
-    private static final long MAX_FILE = 512L << 20;
+    private static final long MAX_FILE = 4L << 30;  // a texture pack's archive is gigabytes
     private static final String LOADER_VERSION = "1.0.0";
 
     // flat: a dark ground, one orange for what acts
@@ -56,7 +58,14 @@ public class ModsActivity extends Activity {
     private static final String[][] LANGS = {{"en", "EN"}, {"in", "ID"}};
 
     private TextView count;
+    private TextView headTitle;
+    private LinearLayout headTools;
     private LinearLayout carList;
+    // the list's selection: picked rows by key ("car:" and the car, "pack:" and the pack's id), kept across rebuilds
+    private boolean selecting;
+    private final java.util.Set<String> selected = new java.util.LinkedHashSet<>();
+    private List<CarConverter.Kept> shownCars = new ArrayList<>();
+    private List<TexturePacks.Kept> shownPacks = new ArrayList<>();
     private AlertDialog dialog;
     private volatile boolean cancelled;
     private ProgressBar progressBar;
@@ -118,6 +127,7 @@ public class ModsActivity extends Activity {
         LinearLayout main = column();
         main.addView(header(), spaced(dp(24)));
         main.addView(action(R.drawable.mods_ic_open, R.string.mods_open_site, R.string.mods_open_site_sub, v -> openSite()), spaced(dp(8)));
+        main.addView(action(R.drawable.mods_ic_open, R.string.mods_open_site2, R.string.mods_open_site_sub, v -> openLink(SITE2)), spaced(dp(8)));
         main.addView(action(R.drawable.mods_ic_file, R.string.mods_from_file, R.string.mods_from_file_sub, v -> pickFile()), spaced(dp(16)));
         main.addView(playButton(), spaced(dp(28)));
         main.addView(steps(), spaced(dp(28)));
@@ -346,34 +356,88 @@ public class ModsActivity extends Activity {
         return t;
     }
 
+    // the list's title and count, and its tools: SELECT and REMOVE ALL, or while selecting ALL and CANCEL
     private View carsHeader() {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.addView(sectionTitle(R.string.mods_manage), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        row.setMinimumHeight(dp(36));
+        headTitle = sectionTitle(R.string.mods_manage);
+        row.addView(headTitle, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         count = text("0", 12, MUTED, true);
         row.addView(count);
+        headTools = new LinearLayout(this);
+        headTools.setGravity(Gravity.CENTER_VERTICAL);
+        row.addView(headTools);
         return row;
     }
 
-    // a car a row, ruled off from the next, its remove button at the end
+    // a small framed word that acts, the list's tools
+    private TextView chip(int label, boolean strong, View.OnClickListener click) {
+        TextView t = text(getString(label), 13, strong ? ACCENT : TEXT, true);
+        t.setGravity(Gravity.CENTER);
+        t.setPadding(dp(12), dp(6), dp(12), dp(6));
+        GradientDrawable frame = shape(Color.TRANSPARENT, 8);
+        frame.setStroke(dp(1), strong ? ACCENT : LINE);
+        t.setBackground(pressable(frame, 8));
+        t.setOnClickListener(click);
+        LinearLayout.LayoutParams l = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        l.setMarginStart(dp(8));
+        t.setLayoutParams(l);
+        return t;
+    }
+
+    private static String carKey(CarConverter.Kept car) { return "car:" + car.car; }
+    private static String packKey(TexturePacks.Kept pack) { return "pack:" + pack.id; }
+
+    // a car a row, ruled off from the next, its remove button at the end (a check box while selecting)
     private View carRow(CarConverter.Kept car) {
+        return modRow(car.title, car.car, carKey(car),
+                () -> askRemove(getString(R.string.mods_remove_text, car.title), () -> remove(car)));
+    }
+
+    private View packRow(TexturePacks.Kept pack) {
+        String sub = getString(R.string.mods_texture_pack, pack.count) + " · " + pack.size + " px"
+                + (pack.author.isEmpty() ? "" : " · " + pack.author);
+        return modRow(pack.name, sub, packKey(pack),
+                () -> askRemove(getString(R.string.mods_remove_pack_text, pack.name), () -> removePack(pack)));
+    }
+
+    private void toggle(String key) {
+        if (!selected.remove(key)) selected.add(key);
+        showInstalled();
+    }
+
+    private View modRow(String title, String sub, String key, Runnable onRemove) {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(0, dp(10), 0, dp(10));
+        if (selecting) {
+            row.setBackground(new RippleDrawable(ColorStateList.valueOf(0x26FFFFFF), null, shape(Color.WHITE, 0)));
+            row.setOnClickListener(v -> toggle(key));
+        }
         LinearLayout words = column();
-        TextView name = text(car.title, 15, TEXT, false);
+        TextView name = text(title, 15, TEXT, false);
         name.setSingleLine(true);
         name.setEllipsize(TextUtils.TruncateAt.END);
         words.addView(name);
-        TextView id = text(car.car, 12, MUTED, false);
+        TextView id = text(sub, 12, MUTED, false);
         id.setSingleLine(true);
         words.addView(id);
         row.addView(words, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        if (selecting) {
+            CheckBox box = new CheckBox(this);
+            box.setButtonTintList(ColorStateList.valueOf(ACCENT));
+            box.setChecked(selected.contains(key));
+            box.setContentDescription(title);
+            box.setOnClickListener(v -> toggle(key));
+            row.addView(box);
+            return row;
+        }
         ImageView del = icon(R.drawable.mods_ic_delete, MUTED, 40);
         del.setPadding(dp(10), dp(10), dp(10), dp(10));
         del.setBackground(new RippleDrawable(ColorStateList.valueOf(0x26FFFFFF), null, null));
-        del.setContentDescription(getString(R.string.mods_remove) + " " + car.title);
-        del.setOnClickListener(v -> askRemove(car));
+        del.setContentDescription(getString(R.string.mods_remove) + " " + title);
+        del.setOnClickListener(v -> onRemove.run());
         row.addView(del);
         return row;
     }
@@ -442,9 +506,46 @@ public class ModsActivity extends Activity {
 
     private void showInstalled() {
         List<CarConverter.Kept> kept = hasAccess() ? ModInstaller.kept() : new ArrayList<>();
-        count.setText(String.valueOf(kept.size()));
+        List<TexturePacks.Kept> packs = hasAccess() ? TexturePacks.kept() : new ArrayList<>();
+        shownCars = kept;
+        shownPacks = packs;
+        int total = kept.size() + packs.size();
+        // what was picked and is gone since (removed elsewhere) is not picked
+        java.util.Set<String> there = new java.util.HashSet<>();
+        for (CarConverter.Kept k : kept) there.add(carKey(k));
+        for (TexturePacks.Kept p : packs) there.add(packKey(p));
+        selected.retainAll(there);
+        if (total == 0) selecting = false;
+        count.setText(String.valueOf(total));
+        headTitle.setText((selecting ? getString(R.string.mods_selected, selected.size())
+                : getString(R.string.mods_manage)).toUpperCase(Locale.getDefault()));
+        count.setVisibility(selecting ? View.GONE : View.VISIBLE);
+        headTools.removeAllViews();
+        if (selecting) {
+            headTools.addView(chip(R.string.mods_select_all, false, v -> {
+                selected.addAll(there);
+                showInstalled();
+            }));
+            headTools.addView(chip(android.R.string.cancel, false, v -> {
+                selecting = false;
+                selected.clear();
+                showInstalled();
+            }));
+        } else if (total > 0) {
+            headTools.addView(chip(R.string.mods_select, false, v -> {
+                selecting = true;
+                showInstalled();
+            }));
+            headTools.addView(chip(R.string.mods_remove_all, true, v -> askRemoveMany(kept, packs)));
+        }
         carList.removeAllViews();
-        if (kept.isEmpty()) {
+        if (selecting) carList.addView(removeSelectedButton(), spaced(dp(8)));
+        for (int i = 0; i < packs.size(); i++) {
+            if (i > 0) carList.addView(rule());
+            carList.addView(packRow(packs.get(i)));
+        }
+        if (!packs.isEmpty() && !kept.isEmpty()) carList.addView(rule());
+        if (kept.isEmpty() && packs.isEmpty()) {
             TextView none = text(getString(R.string.mods_none), 14, MUTED, false);
             none.setPadding(0, dp(12), 0, dp(12));
             carList.addView(none);
@@ -572,6 +673,7 @@ public class ModsActivity extends Activity {
                 error = getString(R.string.mods_error, String.valueOf(e.getMessage()));
             }
             String why = error;
+            boolean pack = why == null && !cancelled && ModArchive.isTexturePack(file);
             runOnUiThread(() -> {
                 if (isDestroyed()) return;
                 dialog.dismiss();
@@ -580,9 +682,34 @@ public class ModsActivity extends Activity {
                     if (why != null) tell(R.string.mods_failed, why);
                     return;
                 }
-                confirm(name, file);
+                if (pack) chooseResolution(name, file);
+                else confirm(name, file);
             });
         }, "ModRead").start();
+    }
+
+    // a texture pack's images are kept at most this size; the game's TEXTURE RESOLUTION picks up to it. Bigger is
+    // sharper, and more storage and GPU memory
+    private void chooseResolution(String name, File file) {
+        int[] sizes = TexturePacks.SIZES;
+        String[] labels = new String[sizes.length];
+        int[] notes = {R.string.mods_res_small, R.string.mods_res_recommended, R.string.mods_res_large, R.string.mods_res_huge};
+        int chosen = 1;
+        for (int i = 0; i < sizes.length; i++) {
+            labels[i] = sizes[i] + " px — " + getString(notes[i]);
+            if (sizes[i] == TexturePacks.max) chosen = i;
+        }
+        int[] pick = {chosen};
+        dialog = new AlertDialog.Builder(this)
+                .setTitle(R.string.mods_res_title)
+                .setSingleChoiceItems(labels, chosen, (d, w) -> pick[0] = w)
+                .setCancelable(false)
+                .setPositiveButton(R.string.mods_next, (d, w) -> {
+                    TexturePacks.max = sizes[pick[0]];
+                    confirm(name, file);
+                })
+                .setNegativeButton(android.R.string.cancel, (d, w) -> file.delete())
+                .show();
     }
 
     // what the install is about to do, said once before anything changes
@@ -620,7 +747,10 @@ public class ModsActivity extends Activity {
                 result = ModInstaller.install(this, file, null, line -> {
                     Log.i(TAG, line);
                     // a pack takes minutes: which car it has got to
-                    if (line.startsWith("car ")) runOnUiThread(() -> progressText.setText(line.substring(4)));
+                    if (line.startsWith("car ") || line.startsWith("pack "))
+                        runOnUiThread(() -> progressText.setText(line.substring(line.indexOf(' ') + 1)));
+                    else if (line.startsWith("read "))
+                        runOnUiThread(() -> progressText.setText(getString(R.string.mods_reading_files, line.substring(5))));
                 });
             } catch (CarConverter.Failure e) {
                 Log.w(TAG, "convert", e);
@@ -676,13 +806,13 @@ public class ModsActivity extends Activity {
                 .show();
     }
 
-    private void askRemove(CarConverter.Kept car) {
-        StringBuilder msg = new StringBuilder(getString(R.string.mods_remove_text, car.title));
+    private void askRemove(String text, Runnable remove) {
+        StringBuilder msg = new StringBuilder(text);
         if (ModInstaller.gameRunning(this)) msg.append("\n\n").append(getString(R.string.mods_game_closes));
         dialog = new AlertDialog.Builder(this)
                 .setTitle(R.string.mods_remove)
                 .setMessage(msg)
-                .setPositiveButton(R.string.mods_remove, (d, w) -> remove(car))
+                .setPositiveButton(R.string.mods_remove, (d, w) -> remove.run())
                 .setNegativeButton(android.R.string.cancel, null)
                 .show();
     }
@@ -704,6 +834,82 @@ public class ModsActivity extends Activity {
                 dialog.dismiss();
                 showInstalled();
                 if (why != null) tell(R.string.mods_failed, why);
+            });
+        }, "ModRemove").start();
+    }
+
+    // REMOVE (n) at the top of the list while selecting: dim and inert with nothing picked
+    private View removeSelectedButton() {
+        int n = selected.size();
+        LinearLayout b = new LinearLayout(this);
+        b.setGravity(Gravity.CENTER);
+        b.setMinimumHeight(dp(44));
+        b.setBackground(n > 0 ? pressable(shape(ACCENT, 8), 8) : shape(SURFACE, 8));
+        int ink = n > 0 ? ON_ACCENT : MUTED;
+        b.addView(icon(R.drawable.mods_ic_delete, ink, 20));
+        TextView t = text(getString(R.string.mods_remove_selected, n), 15, ink, true);
+        t.setPadding(dp(6), 0, 0, 0);
+        b.addView(t);
+        if (n > 0) {
+            b.setOnClickListener(v -> {
+                List<CarConverter.Kept> cars = new ArrayList<>();
+                List<TexturePacks.Kept> packs = new ArrayList<>();
+                for (CarConverter.Kept k : shownCars) if (selected.contains(carKey(k))) cars.add(k);
+                for (TexturePacks.Kept p : shownPacks) if (selected.contains(packKey(p))) packs.add(p);
+                askRemoveMany(cars, packs);
+            });
+        }
+        return b;
+    }
+
+    private void askRemoveMany(List<CarConverter.Kept> cars, List<TexturePacks.Kept> packs) {
+        int n = cars.size() + packs.size();
+        if (n == 0) return;
+        if (n == 1) {  // one: its own words, as its row's button says them
+            if (cars.isEmpty()) askRemove(getString(R.string.mods_remove_pack_text, packs.get(0).name), () -> removeMany(cars, packs));
+            else askRemove(getString(R.string.mods_remove_text, cars.get(0).title), () -> removeMany(cars, packs));
+            return;
+        }
+        askRemove(getString(R.string.mods_remove_many_text, n), () -> removeMany(cars, packs));
+    }
+
+    // the packs' folders gone, then the cars' and the game's files made again once from the rest
+    private void removeMany(List<CarConverter.Kept> cars, List<TexturePacks.Kept> packs) {
+        dialog = progress(getString(R.string.mods_remove), R.string.mods_converting, false);
+        new Thread(() -> {
+            String error = null;
+            try {
+                for (TexturePacks.Kept p : packs) TexturePacks.uninstall(this, p.id);
+                if (!cars.isEmpty()) {
+                    List<String> names = new ArrayList<>();
+                    for (CarConverter.Kept k : cars) names.add(k.car);
+                    ModInstaller.uninstall(this, names, line -> Log.i(TAG, line));
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "remove", e);
+                error = getString(R.string.mods_error, String.valueOf(e.getMessage()));
+            }
+            String why = error;
+            runOnUiThread(() -> {
+                if (isDestroyed()) return;
+                dialog.dismiss();
+                selecting = false;
+                selected.clear();
+                showInstalled();
+                if (why != null) tell(R.string.mods_failed, why);
+            });
+        }, "ModRemove").start();
+    }
+
+    // a pack is a folder of its own: nothing else is made again
+    private void removePack(TexturePacks.Kept pack) {
+        dialog = progress(pack.name, R.string.mods_converting, false);
+        new Thread(() -> {
+            TexturePacks.uninstall(this, pack.id);
+            runOnUiThread(() -> {
+                if (isDestroyed()) return;
+                dialog.dismiss();
+                showInstalled();
             });
         }, "ModRemove").start();
     }

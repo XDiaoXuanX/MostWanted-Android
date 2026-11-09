@@ -25,6 +25,7 @@
 #include "common/music.h"
 #include "common/options.h"
 #include "common/pad_binds.h"
+#include "common/texture_packs.h"
 #include "common/translations.h"
 
 // native/gyro.cpp: steering by tilting the phone
@@ -97,6 +98,9 @@ const char* const kAntiAliasingNames[] = {"OFF", "FXAA", "SSAA 2X"};
 // Options::reflections: how often the cars' reflection is drawn
 constexpr uint32_t kReflectionRates[] = {0, 1, 2, 3};
 const char* const kReflectionRateNames[] = {"FULL", "HALF", "QUARTER", "OFF"};
+// Options::texture_resolution: the texture packs' images at most this many texels across, 0 as installed
+constexpr uint32_t kTextureResolutions[] = {512, 1024, 2048, 0};
+const char* const kTextureResolutionNames[] = {"512", "1024", "2048", "MAX"};
 // the counter's place on the screen, Options::fps_position; top centre is under the settings gear
 enum FpsPosition : uint32_t { kFpsTop, kFpsTopLeft, kFpsTopRight, kFpsBottomLeft, kFpsBottom, kFpsBottomRight };
 constexpr uint32_t kFpsPositions[] = {kFpsTop, kFpsTopLeft, kFpsTopRight, kFpsBottomLeft, kFpsBottom, kFpsBottomRight};
@@ -248,7 +252,8 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kAudioOutp
              kAntiAliasing, kFpsPosition, kFpsTemps, kStickMode, kBloom, kFog, kDonate, kGithub, kYoutube, kFpsUsage,
              kReflections, kParticles, kRain, kRainDrops, kShadows, kRoadReflections,
              kCheatNos, kCheatSpeedbreaker, kCheatCash, kCheatNoPolice, kCheatUnlockAll,
-             kSkipMovies, kYellowTint, kNightMode, kMotionBlur, kShaderPreload, kCheatDragShift, kCheatNoTraffic };
+             kSkipMovies, kYellowTint, kNightMode, kMotionBlur, kShaderPreload, kCheatDragShift, kCheatNoTraffic,
+             kTexturePacks, kTextureResolution };
 
 using rows::Kind;
 using rows::Row;
@@ -281,6 +286,8 @@ constexpr Row kGraphicsRows[] = {
     {Kind::Value, kNightMode, "NIGHT MODE"},
     {Kind::Value, kMotionBlur, "MOTION BLUR"},
     {Kind::Value, kScreenFilter, "SCREEN FILTER"},
+    {Kind::Value, kTexturePacks, "TEXTURE PACKS"},
+    {Kind::Value, kTextureResolution, "TEXTURE RESOLUTION"},
 };
 
 constexpr Row kTouchRows[] = {
@@ -313,7 +320,9 @@ constexpr Row kCheatRows[] = {
 
 // the credits' names, an info row's id; as they are, untranslated
 const char* const kCreditNames[] = {"Rangga Casper", "Zukiru", "bagasromadon", "TGP482",
-                                    "SDL, glslang, toml++, Dear ImGui", "xemu, Cxbx-Reloaded"};
+                                    "SDL, glslang, toml++, Dear ImGui", "xemu, Cxbx-Reloaded",
+                                    // the contributors, by what they brought (git shortlog)
+                                    "datfooldive", "bramaudi", "zetaxlinux"};
 
 // a page of its own: who made the port, and the links to support it
 constexpr Row kCreditRows[] = {
@@ -324,6 +333,10 @@ constexpr Row kCreditRows[] = {
     {Kind::Info, 3, "RECOMPILER AND RUNTIME"},
     {Kind::Info, 4, "LIBRARIES"},
     {Kind::Info, 5, "XBOX REFERENCES"},
+    {Kind::Heading, -1, "CONTRIBUTORS"},
+    {Kind::Info, 6, "LINUX AND CINEMATIC MODE"},
+    {Kind::Info, 7, "CONTROLLER SETTINGS"},
+    {Kind::Info, 8, "LANDSCAPE ORIENTATION"},
     {Kind::Heading, -1, "SUPPORT"},
     {Kind::Link, kDonate, "DONATE"},
     {Kind::Link, kGithub, "GITHUB"},
@@ -370,6 +383,7 @@ bool* ToggleFlag(Settings& s, int id) {
         case kYellowTint: return &o.yellow_tint;
         case kNightMode: return &o.night_mode;
         case kMotionBlur: return &o.motion_blur;
+        case kTexturePacks: return &o.texture_packs;
         case kShaderPreload: return &o.shader_preload;
         case kCheatNos: return &o.cheat_nos;
         case kCheatSpeedbreaker: return &o.cheat_speedbreaker;
@@ -435,6 +449,10 @@ bool StepGraphicsRow(int id, int step, Settings& s, char (&text)[64]) {
             return true;
         case kReflections:
             std::snprintf(text, sizeof(text), "%s", kReflectionRateNames[StepTable(kReflectionRates, o.reflections, step)]);
+            return true;
+        case kTextureResolution:
+            std::snprintf(text, sizeof(text), "%s",
+                          kTextureResolutionNames[StepTable(kTextureResolutions, o.texture_resolution, step)]);
             return true;
         case kFpsPosition:
             std::snprintf(text, sizeof(text), "%s", kFpsPositionNames[StepTable(kFpsPositions, o.fps_position, step)]);
@@ -1110,7 +1128,10 @@ const rows::Row* rows::Page(int page, size_t* count) {
         *count = std::size(kCheatRows);
         return kCheatRows;
     }
-    *count = std::size(kGraphicsRows);
+    // TEXTURE PACKS and TEXTURE RESOLUTION, the last two, only with a pack installed (read at boot, as the packs are)
+    static_assert(kGraphicsRows[std::size(kGraphicsRows) - 2].id == kTexturePacks &&
+                  kGraphicsRows[std::size(kGraphicsRows) - 1].id == kTextureResolution);
+    *count = std::size(kGraphicsRows) - (texpacks::Hashes().empty() ? 2 : 0);
     return kGraphicsRows;
 }
 

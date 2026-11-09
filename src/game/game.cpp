@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <strings.h>
 #include <string>
@@ -256,10 +257,24 @@ static bool MusicMayBegin() {
 // option beside Interactive Music, +0x74, which goes on playing in pursuits). My Music plays at the
 // game's own sliders, menu music +0x54 and game music +0x58, and a song's beginning shows on EA Trax's banner (0x1443C0, as 0xB8590)
 // the engine's cutscenes (NIS: a rival's intro, the career's story) playing, counted at their start (0x214360) and end
-// (0x215CC0); none out of a race, whatever was missed
+// (0x215CC0); none in the front end, whatever was missed
 std::atomic<int> g_nis{0};
 
-// The music is silent while a replay plays (replay.cpp), while the game loads and during the engine's cutscenes: EA Trax's switch and Interactive Music's (+0x74, the pursuits'
+// a movie screen's per-frame tick (0xC98356BA, its NotificationMessage: FEAnyMovie, InGameAnyMovie, the boot's), last
+// seen: a movie plays while it came within the last half second, with no screen kept that a missed destructor would
+// leave silent for good
+constexpr uint32_t kMovieTick = 0xC98356BA;
+std::atomic<int64_t> g_movie_tick_ms{INT64_MIN / 2};
+int64_t NowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+void NoteMovie(uint32_t message) {
+    if (message == kMovieTick) g_movie_tick_ms = NowMs();
+}
+bool MoviePlaying() { return NowMs() - g_movie_tick_ms < 500; }
+
+// The music is silent while a replay plays (replay.cpp), while the game loads, while a movie plays (the FE's, the story's, the
+// boot's) and during the engine's cutscenes: EA Trax's switch and Interactive Music's (+0x74, the pursuits'
 // music) held at 0 and My Music at no level, given back as they were after; the engines and the rest play on. A build
 // before held both at 0 by default and they were saved so: given back once (music_restored)
 void MusicFrame(X86Context& ctx) {
@@ -284,8 +299,10 @@ void MusicFrame(X86Context& ctx) {
     // and while the game loads (its flow neither the front end, 3, nor a race, 6: 0x4936B8, see Racing)
     uint32_t flow = mem::IsCommitted(0x4936B8) ? kernel::R32(0x4936B8) : 3;
     bool loading = flow != 3 && flow != 6;
-    if (flow != 6) g_nis = 0;
-    if (ReplayActive() || loading || g_nis > 0) {
+    // reset in the front end only: the career's opening cutscene starts while its race still loads (flow 4/5), and a
+    // reset there lost its start, the music playing over it
+    if (flow == 3) g_nis = 0;
+    if (ReplayActive() || loading || g_nis > 0 || MoviePlaying()) {
         if (!muted) {
             saved_ea = kernel::R32(profile + kEaTrax);
             saved_interactive = kernel::R32(profile + kInteractiveMusic);
@@ -708,16 +725,19 @@ X86_FUNC(sub_00181120) {
 
 X86_EXTERN_FUNC(__imp__sub_00116230);
 X86_FUNC(sub_00116230) {
+    game::NoteMovie(kernel::R32(ctx.esp + 4));
     game::SkipMovie(ctx, 0);
     __imp__sub_00116230(ctx, base);
 }
 X86_EXTERN_FUNC(__imp__sub_00131A30);
 X86_FUNC(sub_00131A30) {
+    game::NoteMovie(kernel::R32(ctx.esp + 4));
     game::SkipMovie(ctx, 0);
     __imp__sub_00131A30(ctx, base);
 }
 X86_EXTERN_FUNC(__imp__sub_001311B0);
 X86_FUNC(sub_001311B0) {
+    game::NoteMovie(kernel::R32(ctx.esp + 4));
     game::SkipMovie(ctx, 0x2C);
     __imp__sub_001311B0(ctx, base);
 }
@@ -737,6 +757,14 @@ X86_FUNC(sub_0013EEE0) {
     game::ForgetMovie(ctx.ecx);
     __imp__sub_0013EEE0(ctx, base);
 }
+// the movie decoder's fetch of its stream's next block (thiscall, through the STRM reader 0x87A40), for every movie:
+// the story's in a race (a new career's) plays through none of the screens above, and the music went on over it
+X86_EXTERN_FUNC(__imp__sub_002C020F);
+X86_FUNC(sub_002C020F) {
+    if (!game::MoviePlaying()) LOGR("music: a movie plays (its stream read), the music held");
+    game::NoteMovie(game::kMovieTick);
+    __imp__sub_002C020F(ctx, base);
+}
 
 namespace app {
 
@@ -749,6 +777,7 @@ uint32_t ConsoleLanguage() { return 1; }
 X86_EXTERN_FUNC(__imp__sub_00214360);
 X86_FUNC(sub_00214360) {
     game::g_nis++;
+    LOGR("music: cutscene began (flow %u, %d playing)", kernel::R32(0x4936B8), game::g_nis.load());
     __imp__sub_00214360(ctx, base);
 }
 
@@ -756,4 +785,5 @@ X86_EXTERN_FUNC(__imp__sub_00215CC0);
 X86_FUNC(sub_00215CC0) {
     __imp__sub_00215CC0(ctx, base);
     if (game::g_nis > 0) game::g_nis--;
+    LOGR("music: cutscene ended (flow %u, %d playing)", kernel::R32(0x4936B8), game::g_nis.load());
 }
