@@ -49,6 +49,10 @@ struct Options {
     bool texture_packs = true;  // the Mods Loader's texture packs drawn over the game's own, src/game/texture_packs.cpp
     uint32_t texture_resolution = 0;  // the packs' images at most this many texels across, 0 as installed; native/vulkan.cpp
     bool motion_blur = true;   // the blur by speed and the nitrous' radial blur, src/game/game.cpp skips them when off
+    // Headlight (night mode only): beam width, brightness, and colour preset for the front lights
+    uint32_t headlight_width = 100;       // 50-200 %, multiplies the beam quad's width
+    uint32_t headlight_brightness = 100;  // 50-200 %, multiplies the beam colour's alpha
+    uint32_t headlight_color = 0;         // preset index, 0 = warm white (matches the old default 0x48FFF4D8)
     // cheats, src/game/game.cpp's ApplyCheats
     bool cheat_nos = false;           // the nitrous never runs out
     bool cheat_speedbreaker = false;  // the speedbreaker never runs out
