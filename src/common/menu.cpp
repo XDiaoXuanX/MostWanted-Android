@@ -98,6 +98,16 @@ const char* const kAntiAliasingNames[] = {"OFF", "FXAA", "SSAA 2X"};
 // Options::reflections: how often the cars' reflection is drawn
 constexpr uint32_t kReflectionRates[] = {0, 1, 2, 3};
 const char* const kReflectionRateNames[] = {"FULL", "HALF", "QUARTER", "OFF"};
+
+// Headlight: width & brightness as percentages of the base beam; colour as a preset index into game.cpp's
+// kHeadlightPresets[] (same order, only index matters)
+constexpr uint32_t kHeadlightPercentages[] = {50, 75, 100, 125, 150, 175, 200};
+const char* const kHeadlightPercentageNames[] = {"50%", "75%", "100%", "125%", "150%", "175%", "200%"};
+constexpr uint32_t kHeadlightColors[] = {0, 1, 2, 3, 4, 5, 6, 7};
+const char* const kHeadlightColorNames[] = {
+    "WARM WHITE", "PURE WHITE", "COOL WHITE", "BLUE",
+    "YELLOW", "PURPLE", "ORANGE", "RED"
+};
 // Options::texture_resolution: the texture packs' images at most this many texels across, 0 as installed
 constexpr uint32_t kTextureResolutions[] = {512, 1024, 2048, 0};
 const char* const kTextureResolutionNames[] = {"512", "1024", "2048", "MAX"};
@@ -251,6 +261,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kAudioOutp
              kGyroSensitivity, kTouchOpacity, kTouchSize, kTouchEdit, kCheckUpdates, kAspectRatio, kScreenFilter,
              kAntiAliasing, kFpsPosition, kFpsTemps, kStickMode, kBloom, kFog, kDonate, kGithub, kYoutube, kFpsUsage,
              kReflections, kParticles, kRain, kRainDrops, kShadows, kRoadReflections,
+             kHeadlightWidth, kHeadlightBrightness, kHeadlightColor,
              kCheatNos, kCheatSpeedbreaker, kCheatCash, kCheatNoPolice, kCheatUnlockAll,
              kSkipMovies, kYellowTint, kNightMode, kMotionBlur, kShaderPreload, kCheatDragShift, kCheatNoTraffic,
              kTexturePacks, kTextureResolution };
@@ -284,6 +295,9 @@ constexpr Row kGraphicsRows[] = {
     {Kind::Value, kRainDrops, "SCREEN RAINDROPS"},
     {Kind::Value, kYellowTint, "YELLOW TINT"},
     {Kind::Value, kNightMode, "NIGHT MODE"},
+    {Kind::Value, kHeadlightWidth, "HEADLIGHT WIDTH"},
+    {Kind::Value, kHeadlightBrightness, "HEADLIGHT BRIGHTNESS"},
+    {Kind::Value, kHeadlightColor, "HEADLIGHT COLOR"},
     {Kind::Value, kMotionBlur, "MOTION BLUR"},
     {Kind::Value, kScreenFilter, "SCREEN FILTER"},
     {Kind::Value, kTexturePacks, "TEXTURE PACKS"},
@@ -456,6 +470,18 @@ bool StepGraphicsRow(int id, int step, Settings& s, char (&text)[64]) {
             return true;
         case kFpsPosition:
             std::snprintf(text, sizeof(text), "%s", kFpsPositionNames[StepTable(kFpsPositions, o.fps_position, step)]);
+            return true;
+        case kHeadlightWidth:
+            std::snprintf(text, sizeof(text), "%s",
+                          kHeadlightPercentageNames[StepTable(kHeadlightPercentages, o.headlight_width, step)]);
+            return true;
+        case kHeadlightBrightness:
+            std::snprintf(text, sizeof(text), "%s",
+                          kHeadlightPercentageNames[StepTable(kHeadlightPercentages, o.headlight_brightness, step)]);
+            return true;
+        case kHeadlightColor:
+            std::snprintf(text, sizeof(text), "%s",
+                          kHeadlightColorNames[StepTable(kHeadlightColors, o.headlight_color, step)]);
             return true;
         default:
             return false;
