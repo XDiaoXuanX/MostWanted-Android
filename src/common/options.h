@@ -48,13 +48,8 @@ struct Options {
     uint32_t headlight_width = 100;       // 50-600 %, multiplies the beam quad's width
     uint32_t headlight_brightness = 100;  // 50-600 %, multiplies the beam colour's alpha
     uint32_t headlight_color = 0;         // preset index (0-15), 0 = warm white
-    uint32_t headlight_distance = 100;    // 50-600 %, multiplies the beam's length (forward reach)
-    uint32_t headlight_height = 100;      // 50-600 %, multiplies the beam's center distance
-    // traffic headlight glare (non-player vehicles): 0 % = off, > 0 % = on at default brightness
-    uint32_t traffic_headlight_brightness = 100;
-    // player rear-light glare: 0 % = off, > 0 % = on. Note: because mGlareState bits 0–2 are set
-    // together by the game, 0 % disables the player's FRONT glare too.
-    uint32_t player_taillight_brightness = 100;
+    uint32_t headlight_distance = 100;    // 50-600 %, multiplies the beam's forward reach
+    uint32_t headlight_height = 100;      // 50-600 %, multiplies the beam's centre distance
     // cheats
     bool cheat_nos = false;
     bool cheat_speedbreaker = false;
