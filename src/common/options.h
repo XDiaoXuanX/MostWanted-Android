@@ -35,7 +35,9 @@ struct Options {
     bool particles = true;
     bool shadows = true;
     bool road_reflections = true;
-    bool rain = true;
+    // falling rain: how often it is drawn (0=FULL, 1=HALF, 2=QUARTER, 3=OFF), like the car reflections
+    uint32_t rain = 0;
+    bool rain_continuous = false;  // always FULL while the game is drawing rain (overrides HALF/QUARTER)
     bool rain_drops = true;
     bool yellow_tint = false;
     bool night_mode = false;
