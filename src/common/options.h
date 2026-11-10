@@ -21,6 +21,9 @@ inline bool KnownLanguage(const std::string& code) {
 
 inline constexpr uint32_t kAaOff = 0, kAaFxaa = 1, kAaSsaa = 2;
 
+// time of day: sky colour, sun colour, tint, fog and whether the headlights are on
+inline constexpr uint32_t kTimeMorning = 0, kTimeDay = 1, kTimeAfternoon = 2, kTimeNight = 3;
+
 struct Options {
     bool fps_counter = false;
     uint32_t fps_position = 0;
@@ -35,18 +38,16 @@ struct Options {
     bool particles = true;
     bool shadows = true;
     bool road_reflections = true;
-    // falling rain: how often it is drawn (0=FULL, 1=HALF, 2=QUARTER, 3=OFF), like the car reflections
-    uint32_t rain = 0;
-    bool rain_continuous = false;  // always FULL while the game is drawing rain (overrides HALF/QUARTER)
+    bool rain = true;
     bool rain_drops = true;
     bool yellow_tint = false;
-    bool night_mode = false;
+    uint32_t time_of_day = kTimeDay;  // replaces the old bool night_mode; Day is the original look
     bool music_restored = false;
     bool shader_preload = false;
     bool texture_packs = true;
     uint32_t texture_resolution = 0;
     bool motion_blur = true;
-    // headlight (night mode only): width, brightness, colour, distance, height
+    // headlight (night only): width, brightness, colour, distance, height
     uint32_t headlight_width = 100;       // 50-600 %, multiplies the beam quad's width
     uint32_t headlight_brightness = 100;  // 50-600 %, multiplies the beam colour's alpha
     uint32_t headlight_color = 0;         // preset index (0-15), 0 = warm white
@@ -69,6 +70,8 @@ struct Options {
 Options& Opt();
 const std::string& BootLanguage();
 bool LanguageAvailable(const std::string& code);
+// the checks the rest of the code needs; kept as one-line helpers so every caller reads the same thing
+inline bool NightMode() { return Opt().time_of_day == kTimeNight; }
 inline std::atomic<uint32_t> g_road_reflection{0};
 inline std::atomic<uint32_t> g_env_cube{0};
 inline std::atomic<bool> g_focus_paused{false};
