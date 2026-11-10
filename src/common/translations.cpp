@@ -55,6 +55,12 @@ constexpr Entry kEntries[] = {
     {"YELLOW TINT", {u"Teinte jaune", u"Gelbstich", u"Tinta gialla", u"Tinte amarillo", u"Filter kuning"}},
     {"NIGHT MODE", {u"Mode nuit", u"Nachtmodus", u"Modalità notte", u"Modo noche", u"Mode malam"}},
     {"BLOOM", {u"Flou lumineux", u"Bloom", u"Bloom", u"Resplandor", u"Bloom"}},
+
+    // ---- lampu depan: baris pengaturan ----
+    {"HEADLIGHT WIDTH", {u"Largeur des phares", u"Scheinwerferbreite", u"Larghezza fari", u"Ancho de faros", u"Lebar lampu depan"}},
+    {"HEADLIGHT BRIGHTNESS", {u"Intensité des phares", u"Scheinwerferhelligkeit", u"Luminosità fari", u"Brillo de faros", u"Kecerahan lampu depan"}},
+    {"HEADLIGHT COLOR", {u"Couleur des phares", u"Scheinwerferfarbe", u"Colore fari", u"Color de faros", u"Warna lampu depan"}},
+
     {"ASPECT RATIO", {{}, {}, {}, {}, u"Rasio aspek"}},
     {"FULL SCREEN", {{}, {}, {}, {}, u"Layar penuh"}},
     {"SCREEN FILTER", {{}, {}, {}, {}, u"Filter layar"}},
@@ -192,6 +198,16 @@ constexpr Entry kEntries[] = {
     {"CHECK FOR UPDATES", {u"Rechercher des mises à jour", u"Nach Updates suchen", u"Cerca aggiornamenti", u"Buscar actualizaciones", u"Cek pembaruan"}},
     {"CHECK", {u"Rechercher", u"Suchen", u"Cerca", u"Buscar", u"Cek"}},
     {"DEFAULT", {{}, {}, {}, {}, u"Bawaan"}},
+
+    // ---- lampu depan: nilai warna (PURE WHITE, bukan WHITE agar tidak bentrok dengan tombol Xbox) ----
+    {"WARM WHITE", {u"Blanc chaud", u"Warmweiß", u"Bianco caldo", u"Blanco cálido", u"Putih hangat"}},
+    {"PURE WHITE", {u"Blanc pur", u"Reinweiß", u"Bianco puro", u"Blanco puro", u"Putih murni"}},
+    {"COOL WHITE", {u"Blanc froid", u"Kaltweiß", u"Bianco freddo", u"Blanco frío", u"Putih kebiruan"}},
+    {"BLUE", {u"Bleu", u"Blau", u"Blu", u"Azul", u"Biru"}},
+    {"YELLOW", {u"Jaune", u"Gelb", u"Giallo", u"Amarillo", u"Kuning"}},
+    {"PURPLE", {u"Violet", u"Lila", u"Viola", u"Morado", u"Ungu"}},
+    {"ORANGE", {u"Orange", u"Orange", u"Arancione", u"Naranja", u"Jingga"}},
+    {"RED", {u"Rouge", u"Rot", u"Rosso", u"Rojo", u"Merah"}},
 
     {"SETTINGS PANEL", {u"Panneau des paramètres", u"Einstellungsmenü", u"Pannello impostazioni", u"Panel de configuración", u"Panel pengaturan"}},
 
