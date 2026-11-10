@@ -99,14 +99,22 @@ const char* const kAntiAliasingNames[] = {"OFF", "FXAA", "SSAA 2X"};
 constexpr uint32_t kReflectionRates[] = {0, 1, 2, 3};
 const char* const kReflectionRateNames[] = {"FULL", "HALF", "QUARTER", "OFF"};
 
-// Headlight: width & brightness as percentages of the base beam; colour as a preset index into game.cpp's
-// kHeadlightPresets[] (same order, only index matters)
-constexpr uint32_t kHeadlightPercentages[] = {50, 75, 100, 125, 150, 175, 200};
-const char* const kHeadlightPercentageNames[] = {"50%", "75%", "100%", "125%", "150%", "175%", "200%"};
-constexpr uint32_t kHeadlightColors[] = {0, 1, 2, 3, 4, 5, 6, 7};
+// Headlight: width & brightness as percentages of the base beam (50% to 600%); colour as a preset index into
+// game.cpp's kHeadlightPresets[] (same order, only index matters). "PURE WHITE" instead of "WHITE" to avoid a
+// name clash with the Xbox pad's WHITE button in translations.cpp.
+constexpr uint32_t kHeadlightPercentages[] = {50, 75, 100, 125, 150, 175, 200, 250, 300, 400, 500, 600};
+const char* const kHeadlightPercentageNames[] = {
+    "50%", "75%", "100%", "125%", "150%", "175%", "200%", "250%", "300%", "400%", "500%", "600%"
+};
+constexpr uint32_t kHeadlightColors[] = {
+    0, 1, 2, 3, 4, 5, 6, 7,
+    8, 9, 10, 11, 12, 13, 14, 15
+};
 const char* const kHeadlightColorNames[] = {
     "WARM WHITE", "PURE WHITE", "COOL WHITE", "BLUE",
-    "YELLOW", "PURPLE", "ORANGE", "RED"
+    "YELLOW", "PURPLE", "ORANGE", "RED",
+    "GOLD", "GREEN", "CYAN", "PINK",
+    "LIME", "TEAL", "MAGENTA", "MINT"
 };
 // Options::texture_resolution: the texture packs' images at most this many texels across, 0 as installed
 constexpr uint32_t kTextureResolutions[] = {512, 1024, 2048, 0};
