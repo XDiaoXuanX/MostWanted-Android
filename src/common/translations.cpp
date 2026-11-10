@@ -58,6 +58,8 @@ constexpr Entry kEntries[] = {
     {"DAY", {u"Jour", u"Tag", u"Giorno", u"Día", u"Siang"}},
     {"AFTERNOON", {u"Après-midi", u"Nachmittag", u"Pomeriggio", u"Tarde", u"Sore"}},
     {"NIGHT", {u"Nuit", u"Nacht", u"Notte", u"Noche", u"Malam"}},
+    {"MIDNIGHT", {u"Minuit", u"Mitternacht", u"Mezzanotte", u"Medianoche", u"Tengah malam"}},
+    {"DAWN", {u"Aube", u"Morgendämmerung", u"Alba", u"Madrugada", u"Subuh"}},
     {"BLOOM", {u"Flou lumineux", u"Bloom", u"Bloom", u"Resplandor", u"Bloom"}},
 
     // ---- headlight: row labels ----
