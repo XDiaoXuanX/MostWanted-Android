@@ -776,7 +776,7 @@ auto GraphicsFields() {
         o.rain,
         o.rain_drops,
         o.yellow_tint,
-        o.night_mode,
+        o.time_of_day,
         o.motion_blur,
         o.headlight_width,
         o.headlight_brightness,
