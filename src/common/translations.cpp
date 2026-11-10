@@ -46,8 +46,6 @@ constexpr Entry kEntries[] = {
     {"SHADOWS",{u"Ombres", u"Schatten", u"Ombre", u"Sombras", u"Bayangan"}},
     {"PARTICLE EFFECTS", {u"Effets de particules", u"Partikeleffekte", u"Effetti particellari", u"Efectos de partículas", u"Efek partikel"}},
     {"FALLING RAIN", {u"Pluie", u"Regen", u"Pioggia", u"Lluvia", u"Hujan turun"}},
-    // NEW: the "continuous without stopping" mode for falling rain
-    {"RAIN CONTINUOUSLY", {u"Pluie continue", u"Dauerregen", u"Pioggia continua", u"Lluvia continua", u"Hujan terus menerus"}},
     {"SCREEN RAINDROPS", {u"Gouttes de pluie à l'écran", u"Regentropfen auf dem Bildschirm", u"Gocce di pioggia sullo schermo", u"Gotas de lluvia en pantalla", u"Tetes hujan di layar"}},
     {"SHADER PRELOADING", {u"Préchargement des shaders", u"Shader vorladen", u"Precaricamento shader", u"Precarga de shaders", u"Muat shader di awal"}},
     {"TEXTURE RESOLUTION", {u"Résolution des textures", u"Texturauflösung", u"Risoluzione texture", u"Resolución de texturas", u"Resolusi tekstur"}},
@@ -55,7 +53,11 @@ constexpr Entry kEntries[] = {
     {"TEXTURE PACKS", {u"Packs de textures", u"Texturpakete", u"Pacchetti texture", u"Paquetes de texturas", u"Paket tekstur"}},
     {"MOTION BLUR", {u"Flou de mouvement", u"Bewegungsunschärfe", u"Sfocatura di movimento", u"Desenfoque de movimiento", u"Blur gerakan"}},
     {"YELLOW TINT", {u"Teinte jaune", u"Gelbstich", u"Tinta gialla", u"Tinte amarillo", u"Filter kuning"}},
-    {"NIGHT MODE", {u"Mode nuit", u"Nachtmodus", u"Modalità notte", u"Modo noche", u"Mode malam"}},
+    {"TIME OF DAY", {u"Moment de la journée", u"Tageszeit", u"Ora del giorno", u"Momento del día", u"Waktu hari"}},
+    {"MORNING", {u"Matin", u"Morgen", u"Mattina", u"Mañana", u"Pagi"}},
+    {"DAY", {u"Jour", u"Tag", u"Giorno", u"Día", u"Siang"}},
+    {"AFTERNOON", {u"Après-midi", u"Nachmittag", u"Pomeriggio", u"Tarde", u"Sore"}},
+    {"NIGHT", {u"Nuit", u"Nacht", u"Notte", u"Noche", u"Malam"}},
     {"BLOOM", {u"Flou lumineux", u"Bloom", u"Bloom", u"Resplandor", u"Bloom"}},
 
     // ---- headlight: row labels ----
