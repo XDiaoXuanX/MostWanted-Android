@@ -783,6 +783,8 @@ auto GraphicsFields() {
         o.headlight_color,
         o.headlight_distance,
         o.headlight_height,
+        o.traffic_headlight_brightness,
+        o.player_taillight_brightness,
         o.texture_packs,
         o.texture_resolution,
         o.screen_filter
