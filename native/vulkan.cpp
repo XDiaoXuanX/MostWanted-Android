@@ -993,6 +993,18 @@ void FillSurfaceConstants(const State& s, GuestExtent size, DrawConstants& c) {
             c.fog_color[1] *= 0.16f;
             c.fog_color[2] *= 0.28f;
             break;
+        case game::kTimeMidnight:
+            // nearly black fog, only the moon and stars light the road
+            c.fog_color[0] *= 0.04f;
+            c.fog_color[1] *= 0.06f;
+            c.fog_color[2] *= 0.14f;
+            break;
+        case game::kTimeDawn:
+            // pale pink-violet haze rising into the sky
+            c.fog_color[0] *= 1.00f;
+            c.fog_color[1] *= 0.78f;
+            c.fog_color[2] *= 0.88f;
+            break;
         case game::kTimeDay:
         default:
             break;
@@ -3794,9 +3806,23 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
     Assembled& a = asm_;
     if (!Assemble(s, prim, start, count, indices, a)) return;
 
+    // capture the 3D camera's forward direction for the sky overlay (stars, moon, shooting stars).
+    // Depth-tested draws only — HUD draws have Z disabled and their identity view would reset the camera.
+    if (s.rs[kRsZEnable]) {
+        const float* vm = s.transforms[kTsView].data();
+        float fx = -vm[2], fy = -vm[6], fz = -vm[10];
+        float l = std::sqrt(fx * fx + fy * fy + fz * fz);
+        if (l > 0.9f) {
+            game::g_cam_forward_x.store(fx / l, std::memory_order_relaxed);
+            game::g_cam_forward_y.store(fy / l, std::memory_order_relaxed);
+            game::g_cam_forward_z.store(fz / l, std::memory_order_relaxed);
+        }
+    }
+
     // the targets, CPU writes to them first
     uint32_t rows, sub_h;
     Target* rt = EnsureColor(s.rt, rows, sub_h);
+    // ... rest of the function unchanged
     Target* ds = s.rs[kRsZEnable] || s.rs[kRsStencilEnable] ? EnsureTarget(s.zs, true) : nullptr;
     // the zeta has a pitch of its own: a depth buffer wider than the target (Most Wanted's is the multisampled 1280x480
     // under its 640x480 frame) serves its top left corner; one smaller cannot
