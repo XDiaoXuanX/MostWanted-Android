@@ -145,23 +145,38 @@ void ApplyGraphicsSwitches() {
     kernel::G<uint8_t>(kHorizonHaze) = Opt().night_mode ? 0 : 1;
 
     // ---- headlight: colour preset × brightness, and beam width scaled by option ----
-    // Colour presets: index 0 matches the old night-mode default (0x48FFF4D8) exactly.
+    // Format 0xAARRGGBB. Index 0 matches the old night-mode default (0x48FFF4D8) exactly.
+    // Order matches menu.cpp's kHeadlightColorNames[] (16 entries):
+    //   "WARM WHITE", "PURE WHITE", "COOL WHITE", "BLUE",
+    //   "YELLOW", "PURPLE", "ORANGE", "RED",
+    //   "GOLD", "GREEN", "CYAN", "PINK",
+    //   "LIME", "TEAL", "MAGENTA", "MINT"
+    // Each colour's RGB is tuned to actually match its name and be visibly distinct from every other.
     static const uint32_t kHeadlightPresets[] = {
-        0x48FFF4D8,  // WARM WHITE  (default, identical to the previous behaviour)
-        0x48FFFFFF,  // PURE WHITE
-        0x48E0F0FF,  // COOL WHITE
-        0x4880C0FF,  // BLUE
-        0x48FFFF80,  // YELLOW
-        0x48FF80FF,  // PURPLE
-        0x48FFC080,  // ORANGE
-        0x48FF4040,  // RED
+        0x48FFF4D8,  // 0  WARM WHITE  (default, cream)
+        0x48FFFFFF,  // 1  PURE WHITE
+        0x48E0F0FF,  // 2  COOL WHITE  (blue-tinted white)
+        0x484060FF,  // 3  BLUE        (true medium blue)
+        0x48FFFF80,  // 4  YELLOW
+        0x48C040FF,  // 5  PURPLE      (violet)
+        0x48FFC080,  // 6  ORANGE
+        0x48FF4040,  // 7  RED
+        0x48FFB020,  // 8  GOLD        (deep amber, JDM)
+        0x4840FF40,  // 9  GREEN       (pure green)
+        0x4830E0FF,  // 10 CYAN        (bright aqua, distinct from BLUE)
+        0x48FF80D0,  // 11 PINK        (soft pastel pink)
+        0x48B0FF30,  // 12 LIME        (acid lime green)
+        0x4830D0A0,  // 13 TEAL        (green-blue, distinct from GREEN/BLUE)
+        0x48FF00B4,  // 14 MAGENTA     (hot magenta, distinct from PINK/PURPLE)
+        0x4890FFD0,  // 15 MINT        (pale mint green)
     };
     constexpr uint32_t kHeadlightPresetCount =
         sizeof(kHeadlightPresets) / sizeof(kHeadlightPresets[0]);
 
     // Beam width: scales the front (base[2]) and rear (base[4]) widths only.
     // Length and centre distance stay put so the quad still meets the bumper.
-    const uint32_t width_pct = std::clamp<uint32_t>(Opt().headlight_width, 25u, 300u);
+    // 50% to 600%, matching menu.cpp's kHeadlightPercentages[].
+    const uint32_t width_pct = std::clamp<uint32_t>(Opt().headlight_width, 25u, 600u);
     const float width_scale = float(width_pct) / 100.0f;
 
     static const float kBeamDay[5] = {13.0f, 10.0f, 4.9f, 10.0f, 4.9f};
@@ -185,11 +200,15 @@ void ApplyGraphicsSwitches() {
     kernel::G<float>(0x469B00) = beam[4];
 
     // Colour & brightness: night mode only (daytime beam stays 0x80cccccc so daylight shading is unchanged).
+    // Brightness multiplies the alpha; RGB is untouched so the colour stays true at any brightness.
+    // 50% to 600%, matching menu.cpp's kHeadlightPercentages[].
     uint32_t beam_color = 0x80cccccc;
     if (Opt().night_mode) {
         const uint32_t preset = kHeadlightPresets[Opt().headlight_color % kHeadlightPresetCount];
-        const uint32_t brightness_pct = std::clamp<uint32_t>(Opt().headlight_brightness, 25u, 300u);
+        const uint32_t brightness_pct = std::clamp<uint32_t>(Opt().headlight_brightness, 25u, 600u);
         uint32_t alpha = (preset >> 24) & 0xFFu;
+        // Base alpha is 0x48 (~28%). Above ~355% it saturates at 0xFF: further steps stay at full brightness,
+        // never pushing RGB out of 8-bit range (which would break the colour identity).
         alpha = std::min<uint32_t>(0xFFu, alpha * brightness_pct / 100u);
         beam_color = (alpha << 24) | (preset & 0x00FFFFFFu);
     }
