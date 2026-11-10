@@ -396,10 +396,24 @@ X86_FUNC(sub_000CC530) {
     ctx.esp += 4;
 }
 
+// Falling rain: FULL draws every call, HALF every 2nd, QUARTER every 4th, OFF not at all.
+// RAIN CONTINUOUSLY (rain_continuous) forces FULL whenever the game draws rain — no choppy gaps.
 X86_EXTERN_FUNC(__imp__sub_002527A0);
 X86_FUNC(sub_002527A0) {
-    if (game::Opt().rain) return __imp__sub_002527A0(ctx, base);
-    ctx.esp += 4;
+    const auto& o = game::Opt();
+    if (o.rain >= 3) {  // OFF
+        ctx.esp += 4;
+        return;
+    }
+    if (!o.rain_continuous) {
+        static uint32_t frame = 0;
+        const uint32_t every = 1u << o.rain;
+        if (frame++ % every != 0) {
+            ctx.esp += 4;
+            return;
+        }
+    }
+    __imp__sub_002527A0(ctx, base);
 }
 
 X86_EXTERN_FUNC(__imp__sub_000C1BD0);
