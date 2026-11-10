@@ -975,10 +975,27 @@ void FillSurfaceConstants(const State& s, GuestExtent size, DrawConstants& c) {
     c.surf[1] = float(size.h);
     c.surf[2] = 1.0f / s.zscale;
     Color(s.rs[kRsFogColor], c.fog_color);
-    if (game::Opt().night_mode) {
-        c.fog_color[0] *= 0.12f;
-        c.fog_color[1] *= 0.16f;
-        c.fog_color[2] *= 0.28f;
+    switch (game::Opt().time_of_day) {
+        case game::kTimeMorning:
+            // warm morning haze, close to neutral
+            c.fog_color[0] *= 1.05f;
+            c.fog_color[1] *= 1.02f;
+            break;
+        case game::kTimeAfternoon:
+            // golden-hour haze, a warmer red and less blue
+            c.fog_color[0] *= 1.10f;
+            c.fog_color[1] *= 0.92f;
+            c.fog_color[2] *= 0.80f;
+            break;
+        case game::kTimeNight:
+            // the night's cool fog, much darker than day
+            c.fog_color[0] *= 0.12f;
+            c.fog_color[1] *= 0.16f;
+            c.fog_color[2] *= 0.28f;
+            break;
+        case game::kTimeDay:
+        default:
+            break;
     }
     c.misc[0] = float(SimpleState(s, kMAlphaRef) & 0xFF);
     c.misc[1] = SimpleState(s, kMAlphaTestEnable) ? float(CmpIndex(SimpleState(s, kMAlphaFunc))) : kAlphaTestAlways;
