@@ -143,14 +143,37 @@ void ApplyGraphicsSwitches() {
     std::memcpy(kernel::HostPtr(kSkyMidday), midday, sizeof(kSkyNight));
     std::memcpy(kernel::HostPtr(kSkySunset), sunset, sizeof(kSkyNight));
     kernel::G<uint8_t>(kHorizonHaze) = Opt().night_mode ? 0 : 1;
-    kernel::W32(kHeadlightBeamColor, Opt().night_mode ? 0x48FFF4D8 : 0x80cccccc);
 
-    // Car headlight beam quad geometry tuning:
-    // Default vanilla is a 20m flat rectangle (13m center, 10m length, 4.9m width) which severely clips/floats on curves.
-    // In night mode, use a realistic 12m cone (10m center, 6m length, 5.2m wide ahead, 2.4m at bumper) that hugs road contours.
+    // ---- headlight: colour preset × brightness, and beam width scaled by option ----
+    // Colour presets: index 0 matches the old night-mode default (0x48FFF4D8) exactly.
+    static const uint32_t kHeadlightPresets[] = {
+        0x48FFF4D8,  // WARM WHITE  (default, identical to the previous behaviour)
+        0x48FFFFFF,  // PURE WHITE
+        0x48E0F0FF,  // COOL WHITE
+        0x4880C0FF,  // BLUE
+        0x48FFFF80,  // YELLOW
+        0x48FF80FF,  // PURPLE
+        0x48FFC080,  // ORANGE
+        0x48FF4040,  // RED
+    };
+    constexpr uint32_t kHeadlightPresetCount =
+        sizeof(kHeadlightPresets) / sizeof(kHeadlightPresets[0]);
+
+    // Beam width: scales the front (base[2]) and rear (base[4]) widths only.
+    // Length and centre distance stay put so the quad still meets the bumper.
+    const uint32_t width_pct = std::clamp<uint32_t>(Opt().headlight_width, 25u, 300u);
+    const float width_scale = float(width_pct) / 100.0f;
+
     static const float kBeamDay[5] = {13.0f, 10.0f, 4.9f, 10.0f, 4.9f};
     static const float kBeamNight[5] = {10.0f, 6.0f, 5.2f, 6.0f, 2.4f};
-    const float* beam = Opt().night_mode ? kBeamNight : kBeamDay;
+    const float* base_beam = Opt().night_mode ? kBeamNight : kBeamDay;
+    const float beam[5] = {
+        base_beam[0],
+        base_beam[1],
+        base_beam[2] * width_scale,
+        base_beam[3],
+        base_beam[4] * width_scale,
+    };
     kernel::G<float>(0x469ACC) = beam[0];
     kernel::G<float>(0x469AE4) = beam[1];
     kernel::G<float>(0x469AE8) = beam[1];
@@ -160,6 +183,17 @@ void ApplyGraphicsSwitches() {
     kernel::G<float>(0x469AF8) = beam[3];
     kernel::G<float>(0x469AFC) = beam[4];
     kernel::G<float>(0x469B00) = beam[4];
+
+    // Colour & brightness: night mode only (daytime beam stays 0x80cccccc so daylight shading is unchanged).
+    uint32_t beam_color = 0x80cccccc;
+    if (Opt().night_mode) {
+        const uint32_t preset = kHeadlightPresets[Opt().headlight_color % kHeadlightPresetCount];
+        const uint32_t brightness_pct = std::clamp<uint32_t>(Opt().headlight_brightness, 25u, 300u);
+        uint32_t alpha = (preset >> 24) & 0xFFu;
+        alpha = std::min<uint32_t>(0xFFu, alpha * brightness_pct / 100u);
+        beam_color = (alpha << 24) | (preset & 0x00FFFFFFu);
+    }
+    kernel::W32(kHeadlightBeamColor, beam_color);
 
     bool night = Opt().night_mode;
     if (!night && g_prev_night_mode) g_headlights_clear_frames = 120;
