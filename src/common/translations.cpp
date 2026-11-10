@@ -62,8 +62,6 @@ constexpr Entry kEntries[] = {
     {"HEADLIGHT COLOR", {u"Couleur des phares", u"Scheinwerferfarbe", u"Colore fari", u"Color de faros", u"Warna lampu depan"}},
     {"HEADLIGHT DISTANCE", {u"Portée des phares", u"Scheinwerferweite", u"Portata fari", u"Alcance de faros", u"Jarak lampu depan"}},
     {"HEADLIGHT HEIGHT", {u"Hauteur des phares", u"Scheinwerferhöhe", u"Altezza fari", u"Altura de faros", u"Tinggi lampu depan"}},
-    {"TRAFFIC HEADLIGHTS", {u"Phares des autres", u"Scheinwerfer anderer", u"Fari altrui", u"Faros ajenos", u"Lampu mobil lain"}},
-    {"PLAYER TAILLIGHTS", {u"Feux arrière", u"Rückleuchten", u"Luci posteriori", u"Luces traseras", u"Lampu belakang"}},
 
     {"ASPECT RATIO", {{}, {}, {}, {}, u"Rasio aspek"}},
     {"FULL SCREEN", {{}, {}, {}, {}, u"Layar penuh"}},
