@@ -22,7 +22,8 @@ inline bool KnownLanguage(const std::string& code) {
 inline constexpr uint32_t kAaOff = 0, kAaFxaa = 1, kAaSsaa = 2;
 
 // time of day: sky colour, sun colour, tint, fog and whether the headlights are on
-inline constexpr uint32_t kTimeMorning = 0, kTimeDay = 1, kTimeAfternoon = 2, kTimeNight = 3;
+inline constexpr uint32_t kTimeMorning = 0, kTimeDay = 1, kTimeAfternoon = 2, kTimeNight = 3,
+                            kTimeMidnight = 4, kTimeDawn = 5;
 
 struct Options {
     bool fps_counter = false;
@@ -70,8 +71,16 @@ struct Options {
 Options& Opt();
 const std::string& BootLanguage();
 bool LanguageAvailable(const std::string& code);
-// the checks the rest of the code needs; kept as one-line helpers so every caller reads the same thing
-inline bool NightMode() { return Opt().time_of_day == kTimeNight; }
+// dark enough to need headlights, the darker tint, the bloom cap and the fog: Night and Midnight
+inline bool NightMode() {
+    return Opt().time_of_day == kTimeNight || Opt().time_of_day == kTimeMidnight;
+}
+// the camera's forward direction in world space, written by the renderer each draw and read by the sky overlay
+inline std::atomic<float> g_cam_forward_x{0.0f};
+inline std::atomic<float> g_cam_forward_y{0.0f};
+inline std::atomic<float> g_cam_forward_z{1.0f};
+// the midnight / dawn sky: stars, the moon, shooting stars; called from app::DrawUi
+void DrawSkyElements();
 inline std::atomic<uint32_t> g_road_reflection{0};
 inline std::atomic<uint32_t> g_env_cube{0};
 inline std::atomic<bool> g_focus_paused{false};
