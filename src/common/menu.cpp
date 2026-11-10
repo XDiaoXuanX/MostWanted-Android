@@ -269,7 +269,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kAudioOutp
              kGyroSensitivity, kTouchOpacity, kTouchSize, kTouchEdit, kCheckUpdates, kAspectRatio, kScreenFilter,
              kAntiAliasing, kFpsPosition, kFpsTemps, kStickMode, kBloom, kFog, kDonate, kGithub, kYoutube, kFpsUsage,
              kReflections, kParticles, kRain, kRainDrops, kShadows, kRoadReflections,
-             kHeadlightWidth, kHeadlightBrightness, kHeadlightColor,
+             kHeadlightWidth, kHeadlightBrightness, kHeadlightColor, kHeadlightDistance, kHeadlightHeight,
              kCheatNos, kCheatSpeedbreaker, kCheatCash, kCheatNoPolice, kCheatUnlockAll,
              kSkipMovies, kYellowTint, kNightMode, kMotionBlur, kShaderPreload, kCheatDragShift, kCheatNoTraffic,
              kTexturePacks, kTextureResolution };
@@ -306,6 +306,8 @@ constexpr Row kGraphicsRows[] = {
     {Kind::Value, kHeadlightWidth, "HEADLIGHT WIDTH"},
     {Kind::Value, kHeadlightBrightness, "HEADLIGHT BRIGHTNESS"},
     {Kind::Value, kHeadlightColor, "HEADLIGHT COLOR"},
+    {Kind::Value, kHeadlightDistance, "HEADLIGHT DISTANCE"},
+    {Kind::Value, kHeadlightHeight, "HEADLIGHT HEIGHT"},
     {Kind::Value, kMotionBlur, "MOTION BLUR"},
     {Kind::Value, kScreenFilter, "SCREEN FILTER"},
     {Kind::Value, kTexturePacks, "TEXTURE PACKS"},
@@ -490,6 +492,14 @@ bool StepGraphicsRow(int id, int step, Settings& s, char (&text)[64]) {
         case kHeadlightColor:
             std::snprintf(text, sizeof(text), "%s",
                           kHeadlightColorNames[StepTable(kHeadlightColors, o.headlight_color, step)]);
+            return true;
+        case kHeadlightDistance:
+            std::snprintf(text, sizeof(text), "%s",
+                          kHeadlightPercentageNames[StepTable(kHeadlightPercentages, o.headlight_distance, step)]);
+            return true;
+        case kHeadlightHeight:
+            std::snprintf(text, sizeof(text), "%s",
+                          kHeadlightPercentageNames[StepTable(kHeadlightPercentages, o.headlight_height, step)]);
             return true;
         default:
             return false;
