@@ -46,6 +46,8 @@ constexpr Entry kEntries[] = {
     {"SHADOWS",{u"Ombres", u"Schatten", u"Ombre", u"Sombras", u"Bayangan"}},
     {"PARTICLE EFFECTS", {u"Effets de particules", u"Partikeleffekte", u"Effetti particellari", u"Efectos de partículas", u"Efek partikel"}},
     {"FALLING RAIN", {u"Pluie", u"Regen", u"Pioggia", u"Lluvia", u"Hujan turun"}},
+    // NEW: the "continuous without stopping" mode for falling rain
+    {"RAIN CONTINUOUSLY", {u"Pluie continue", u"Dauerregen", u"Pioggia continua", u"Lluvia continua", u"Hujan terus menerus"}},
     {"SCREEN RAINDROPS", {u"Gouttes de pluie à l'écran", u"Regentropfen auf dem Bildschirm", u"Gocce di pioggia sullo schermo", u"Gotas de lluvia en pantalla", u"Tetes hujan di layar"}},
     {"SHADER PRELOADING", {u"Préchargement des shaders", u"Shader vorladen", u"Precaricamento shader", u"Precarga de shaders", u"Muat shader di awal"}},
     {"TEXTURE RESOLUTION", {u"Résolution des textures", u"Texturauflösung", u"Risoluzione texture", u"Resolución de texturas", u"Resolusi tekstur"}},
