@@ -4,12 +4,15 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <strings.h>
 #include <string>
 #include <vector>
 #include <unordered_map>
+
+#include <imgui.h>
 
 #include "app/app.h"
 #include "common/aspect.h"
@@ -96,14 +99,17 @@ void ApplyGraphicsSwitches() {
     g_road_reflection = TargetData(kernel::R32(kRoadReflectionView + 0x60));
     g_env_cube = TargetData(kernel::R32(kEnvMapFace0Target));
 
-    // ---- the sky: a morning, the original day, a golden afternoon, or night ----
-    static const float kSkyMorningMidday[4] = {1.08f, 1.04f, 0.98f, 1.0f};
-    static const float kSkyMorningSunset[4] = {1.12f, 1.00f, 0.90f, 1.0f};
-    static const float kSkyDayMidday[4]     = {0.9723f, 0.9900f, 1.1000f, 1.0f};
-    static const float kSkyDaySunset[4]     = {0.95858f, 1.0700f, 1.1150f, 1.0f};
+    // ---- the sky: morning, day, afternoon, night, midnight, dawn ----
+    static const float kSkyMorningMidday[4]   = {1.08f, 1.04f, 0.98f, 1.0f};
+    static const float kSkyMorningSunset[4]   = {1.12f, 1.00f, 0.90f, 1.0f};
+    static const float kSkyDayMidday[4]       = {0.9723f, 0.9900f, 1.1000f, 1.0f};
+    static const float kSkyDaySunset[4]       = {0.95858f, 1.0700f, 1.1150f, 1.0f};
     static const float kSkyAfternoonMidday[4] = {1.18f, 1.05f, 0.85f, 1.0f};
     static const float kSkyAfternoonSunset[4] = {1.25f, 0.90f, 0.62f, 1.0f};
-    static const float kSkyNight[4]         = {0.10f, 0.15f, 0.32f, 1.0f};
+    static const float kSkyNight[4]           = {0.10f, 0.15f, 0.32f, 1.0f};
+    static const float kSkyMidnight[4]        = {0.01f, 0.02f, 0.06f, 1.0f};   // very dark navy
+    static const float kSkyDawnMidday[4]      = {0.42f, 0.34f, 0.58f, 1.0f};   // cool violet-blue
+    static const float kSkyDawnSunset[4]      = {0.95f, 0.55f, 0.48f, 1.0f};   // warm pink horizon
     const float* midday;
     const float* sunset;
     switch (Opt().time_of_day) {
@@ -118,6 +124,13 @@ void ApplyGraphicsSwitches() {
         case kTimeNight:
             midday = sunset = kSkyNight;
             break;
+        case kTimeMidnight:
+            midday = sunset = kSkyMidnight;
+            break;
+        case kTimeDawn:
+            midday = kSkyDawnMidday;
+            sunset = kSkyDawnSunset;
+            break;
         case kTimeDay:
         default:
             midday = kSkyDayMidday;
@@ -126,7 +139,8 @@ void ApplyGraphicsSwitches() {
     }
     std::memcpy(kernel::HostPtr(kSkyMidday), midday, sizeof(kSkyNight));
     std::memcpy(kernel::HostPtr(kSkySunset), sunset, sizeof(kSkyNight));
-    kernel::G<uint8_t>(kHorizonHaze) = Opt().time_of_day == kTimeNight ? 0 : 1;
+    kernel::G<uint8_t>(kHorizonHaze) =
+        Opt().time_of_day == kTimeNight || Opt().time_of_day == kTimeMidnight ? 0 : 1;
 
     // ---- headlight: colour preset x brightness, and beam geometry scaled by options ----
     // Format 0xAARRGGBB. Index 0 matches the old night-mode default (0x48FFF4D8) exactly.
@@ -167,7 +181,7 @@ void ApplyGraphicsSwitches() {
     kernel::G<float>(0x469AFC) = beam[4];
     kernel::G<float>(0x469B00) = beam[4];
 
-    // Colour & brightness: night only (daytime beam stays 0x80cccccc so daylight shading is unchanged).
+    // Colour & brightness: night and midnight only (daytime beam stays 0x80cccccc so daylight shading is unchanged).
     uint32_t beam_color = 0x80cccccc;
     if (NightMode()) {
         const uint32_t preset = kHeadlightPresets[Opt().headlight_color % kHeadlightPresetCount];
@@ -390,6 +404,196 @@ constexpr uint32_t kGameFlowState = 0x4936B8;
 constexpr uint32_t kGameFlowRacing = 6;
 bool Racing() { return mem::IsCommitted(kGameFlowState) && kernel::R32(kGameFlowState) == kGameFlowRacing; }
 
+// ---- the midnight / dawn sky: stars, a moon and shooting stars, following the camera ----
+
+namespace {
+
+struct SkyStar {
+    float wx, wy, wz;       // unit direction (world space)
+    float size;             // px radius
+    float brightness;       // 0..1
+    float phase;            // twinkle offset
+};
+
+const std::vector<SkyStar>& Stars() {
+    static const std::vector<SkyStar> list = [] {
+        std::vector<SkyStar> v;
+        v.reserve(150);
+        for (int i = 0; i < 150; i++) {
+            uint32_t h1 = uint32_t(i) * 2654435761u;
+            uint32_t h2 = uint32_t(i) * 1597334677u;
+            uint32_t h3 = uint32_t(i) * 3214567891u;
+            uint32_t h4 = uint32_t(i) * 1234567891u;
+            float az = (h1 & 0xFFFF) / 65536.0f * 6.28318530718f;
+            float el = 0.15f + (h2 & 0xFFFF) / 65536.0f * 1.35f;   // 0.15..1.5 rad, above the horizon
+            SkyStar s;
+            s.wx = std::cos(el) * std::sin(az);
+            s.wy = std::sin(el);
+            s.wz = std::cos(el) * std::cos(az);
+            s.size = 0.7f + ((h3 >> 8) & 0x3F) / 63.0f * 0.8f;
+            s.brightness = 0.4f + ((h3 & 0xFF) / 255.0f) * 0.6f;
+            s.phase = (h4 & 0xFF) / 255.0f * 6.28318530718f;
+            v.push_back(s);
+        }
+        return v;
+    }();
+    return list;
+}
+
+struct Shooting {
+    float x, y;    // frame units
+    float vx, vy;  // per-frame in frame units
+    int age, max_age;
+};
+
+}  // namespace
+
+void DrawSkyElements() {
+    const uint32_t tod = Opt().time_of_day;
+    if (tod != kTimeMidnight && tod != kTimeDawn) return;
+    if (!Racing()) return;   // no overlay in menus, cutscenes or loading
+
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    ImVec2 screen = ImGui::GetIO().DisplaySize;
+    const float W = screen.x, H = screen.y;
+    if (W < 1 || H < 1) return;
+    const float cx = W * 0.5f, cy = H * 0.5f;
+
+    // camera forward (written by vulkan.cpp each draw); fall back to the +Z default if it is stale
+    float fx = g_cam_forward_x.load(std::memory_order_relaxed);
+    float fy = g_cam_forward_y.load(std::memory_order_relaxed);
+    float fz = g_cam_forward_z.load(std::memory_order_relaxed);
+    float len = std::sqrt(fx * fx + fy * fy + fz * fz);
+    if (len < 0.001f) return;
+    fx /= len; fy /= len; fz /= len;
+
+    // right = forward × worldUp, normalised; the codebase's camera looks down -Z, so this gives a proper +right
+    float rx = -fz, ry = 0.0f, rz = fx;
+    float rlen = std::sqrt(rx * rx + rz * rz);
+    if (rlen < 0.001f) { rx = 1.0f; ry = 0.0f; rz = 0.0f; }
+    else { rx /= rlen; rz /= rlen; }
+    // up = right × forward
+    float ux = ry * fz - rz * fy;
+    float uy = rz * fx - rx * fz;
+    float uz = rx * fy - ry * fx;
+
+    // 65° horizontal FOV: a reasonable default; the projection is a simple perspective that ignores the game's matrix
+    const float tan_h = std::tan(32.5f * 3.14159265f / 180.0f);
+    const float tan_v = tan_h * H / W;
+    auto project = [&](float wx, float wy, float wz, float& sx, float& sy) -> bool {
+        float dfwd = wx * fx + wy * fy + wz * fz;
+        if (dfwd < 0.2f) return false;
+        float dright = wx * rx + wy * ry + wz * rz;
+        float dup = wx * ux + wy * uy + wz * uz;
+        sx = cx + (dright / dfwd) * (W * 0.5f) / tan_h;
+        sy = cy - (dup / dfwd) * (H * 0.5f) / tan_v;
+        return true;
+    };
+
+    const bool midnight = tod == kTimeMidnight;
+    const uint32_t now = uint32_t(ImGui::GetFrameCount());
+
+    // ---- dawn's sky glow: a warm horizontal band near the top ----
+    if (!midnight) {
+        for (int i = 0; i < 10; i++) {
+            float t = float(i) / 9.0f;
+            float y = H * 0.05f + t * H * 0.35f;
+            uint32_t a = uint32_t((1.0f - t) * 25.0f);
+            dl->AddRectFilled(ImVec2(0, y), ImVec2(W, y + H * 0.04f), IM_COL32(255, 160, 120, a));
+        }
+    }
+
+    // ---- stars (all of them at midnight, dimmed and only the high ones at dawn) ----
+    const float dim = midnight ? 1.0f : 0.5f;
+    for (const SkyStar& star : Stars()) {
+        if (!midnight && star.wy < 0.35f) continue;   // dawn keeps only the high stars
+        float sx, sy;
+        if (!project(star.wx, star.wy, star.wz, sx, sy)) continue;
+        if (sx < -5 || sx > W + 5 || sy < -5 || sy > H + 5) continue;
+
+        // fade near the screen's edges so stars slide in and out cleanly as the camera turns
+        float edge = 1.0f;
+        const float m = 40.0f;
+        if (sx < m) edge *= sx / m;
+        if (sx > W - m) edge *= (W - sx) / m;
+        if (sy < m) edge *= sy / m;
+        if (sy > H - m) edge *= (H - sy) / m;
+        edge = std::clamp(edge, 0.0f, 1.0f);
+
+        float horizon = std::clamp((star.wy - 0.15f) * 2.5f, 0.0f, 1.0f);
+        float twinkle = 0.85f + 0.15f * std::sin(now * 0.02f + star.phase);
+        float alpha_f = edge * horizon * star.brightness * twinkle * dim;
+        if (alpha_f <= 0.01f) continue;
+
+        uint32_t a = uint32_t(alpha_f * 220.0f);
+        dl->AddCircleFilled(ImVec2(sx, sy), star.size, IM_COL32(255, 255, 240, a));
+    }
+
+    // ---- the moon (midnight only) ----
+    if (midnight) {
+        const float moon_az = 0.0f, moon_el = 0.65f;   // ~37° up
+        float wx = std::cos(moon_el) * std::sin(moon_az);
+        float wy = std::sin(moon_el);
+        float wz = std::cos(moon_el) * std::cos(moon_az);
+        float sx, sy;
+        if (project(wx, wy, wz, sx, sy) && sx > -200 && sx < W + 200 && sy > -200 && sy < H + 200) {
+            // soft bluish outer glow
+            for (int g = 3; g >= 1; g--)
+                dl->AddCircleFilled(ImVec2(sx, sy), 30.0f + g * 20.0f, IM_COL32(180, 200, 255, 15 + g * 8));
+            // disk
+            dl->AddCircleFilled(ImVec2(sx, sy), 28.0f, IM_COL32(245, 245, 230, 240));
+            // craters
+            dl->AddCircleFilled(ImVec2(sx - 8, sy - 6), 5.0f, IM_COL32(220, 220, 205, 230));
+            dl->AddCircleFilled(ImVec2(sx + 7, sy + 5), 4.0f, IM_COL32(220, 220, 205, 230));
+            dl->AddCircleFilled(ImVec2(sx + 4, sy - 10), 3.0f, IM_COL32(225, 225, 210, 230));
+            dl->AddCircleFilled(ImVec2(sx - 5, sy + 9), 3.5f, IM_COL32(220, 220, 205, 230));
+        }
+    }
+
+    // ---- shooting stars (midnight only) ----
+    if (midnight) {
+        static std::vector<Shooting> shooting;
+        static uint32_t last_spawn = 0;
+
+        // roughly one every 5–12 s at 60 fps
+        if (now - last_spawn > 300 + (now % 400) && shooting.size() < 2) {
+            uint32_t seed = now * 2654435761u;
+            Shooting s;
+            s.x  = 0.10f + (seed & 0xFF) / 255.0f * 0.80f;
+            s.y  = 0.05f + ((seed >> 8) & 0xFF) / 255.0f * 0.25f;
+            s.vx = 0.005f + ((seed >> 16) & 0xFF) / 255.0f * 0.008f;
+            s.vy = 0.002f + ((seed >> 24) & 0xFF) / 255.0f * 0.004f;
+            s.age = 0;
+            s.max_age = 80 + (seed & 0x3F);
+            shooting.push_back(s);
+            last_spawn = now;
+        }
+
+        for (auto it = shooting.begin(); it != shooting.end();) {
+            it->x += it->vx;
+            it->y += it->vy;
+            it->age++;
+            if (it->age > it->max_age || it->x > 1.1f || it->y > 1.1f) {
+                it = shooting.erase(it);
+                continue;
+            }
+            float progress = float(it->age) / float(it->max_age);
+            float alpha_f = 1.0f - progress;
+            if (alpha_f < 0.05f) { ++it; continue; }
+
+            float hx = it->x * W, hy = it->y * H;
+            float tx = (it->x - it->vx * 15.0f) * W;
+            float ty = (it->y - it->vy * 15.0f) * H;
+            uint32_t a = uint32_t(alpha_f * 255.0f);
+            dl->AddLine(ImVec2(tx, ty), ImVec2(hx, hy), IM_COL32(255, 255, 200, a / 3), 1.5f);
+            dl->AddLine(ImVec2((tx + hx) * 0.5f, (ty + hy) * 0.5f), ImVec2(hx, hy),
+                        IM_COL32(255, 255, 220, a), 2.0f);
+            dl->AddCircleFilled(ImVec2(hx, hy), 2.5f, IM_COL32(255, 255, 255, a));
+            ++it;
+        }
+    }
+}
+
 }  // namespace game
 
 X86_EXTERN_FUNC(__imp__sub_000CC530);
@@ -431,6 +635,18 @@ X86_FUNC(sub_000C1BD0) {
             r = 0.15f * luma;
             g = 0.32f * luma;
             b = 0.68f * luma;
+            break;
+        case game::kTimeMidnight:
+            // very dark, faintly blue — the sky overlay does the heavy lifting
+            r = 0.06f * luma;
+            g = 0.10f * luma;
+            b = 0.22f * luma;
+            break;
+        case game::kTimeDawn:
+            // a soft pink-violet, a little warm
+            r = 0.95f * luma;
+            g = 0.72f * luma;
+            b = 0.85f * luma;
             break;
         case game::kTimeDay:
         default:
