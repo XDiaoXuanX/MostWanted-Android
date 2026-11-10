@@ -32,6 +32,8 @@ void Rumble(int port, uint16_t& left, uint16_t& right) {
 void Load(const void* table) {
     const toml::table& t = *static_cast<const toml::table*>(table);
     Options& o = Opt();
+    // migrate the old "rain = true/false" boolean to the new FULL/HALF/QUARTER/OFF mode
+    if (auto rain = t["rain"].as_boolean()) o.rain = rain->get() ? 0 : 3;
     if (t["defaults"].value_or(int64_t(0)) < 4 && t["car_reflections"].value_or(int64_t(2)) == 0)
         o.reflections = 2;
     std::string language = t["language"].value_or(o.language);
@@ -94,7 +96,8 @@ const app::GameInfo app::kGame = {
                 {"particles", &game::Opt().particles, nullptr},
                 {"shadows", &game::Opt().shadows, nullptr},
                 {"road_reflections", &game::Opt().road_reflections, nullptr},
-                {"rain", &game::Opt().rain, nullptr},
+                {"rain", nullptr, &game::Opt().rain},
+                {"rain_continuous", &game::Opt().rain_continuous, nullptr},
                 {"rain_drops", &game::Opt().rain_drops, nullptr},
                 {"yellow_tint", &game::Opt().yellow_tint, nullptr},
                 {"night_mode", &game::Opt().night_mode, nullptr},
