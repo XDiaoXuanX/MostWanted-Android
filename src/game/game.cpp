@@ -96,47 +96,50 @@ void ApplyGraphicsSwitches() {
     g_road_reflection = TargetData(kernel::R32(kRoadReflectionView + 0x60));
     g_env_cube = TargetData(kernel::R32(kEnvMapFace0Target));
 
-    static const float kSkyDayMidday[4] = {0.9723f, 0.9900f, 1.1000f, 1.0f};
-    static const float kSkyDaySunset[4] = {0.95858f, 1.0700f, 1.1150f, 1.0f};
-    static const float kSkyNight[4] = {0.10f, 0.15f, 0.32f, 1.0f};
-    const float* midday = Opt().night_mode ? kSkyNight : kSkyDayMidday;
-    const float* sunset = Opt().night_mode ? kSkyNight : kSkyDaySunset;
+    // ---- the sky: a morning, the original day, a golden afternoon, or night ----
+    static const float kSkyMorningMidday[4] = {1.08f, 1.04f, 0.98f, 1.0f};
+    static const float kSkyMorningSunset[4] = {1.12f, 1.00f, 0.90f, 1.0f};
+    static const float kSkyDayMidday[4]     = {0.9723f, 0.9900f, 1.1000f, 1.0f};
+    static const float kSkyDaySunset[4]     = {0.95858f, 1.0700f, 1.1150f, 1.0f};
+    static const float kSkyAfternoonMidday[4] = {1.18f, 1.05f, 0.85f, 1.0f};
+    static const float kSkyAfternoonSunset[4] = {1.25f, 0.90f, 0.62f, 1.0f};
+    static const float kSkyNight[4]         = {0.10f, 0.15f, 0.32f, 1.0f};
+    const float* midday;
+    const float* sunset;
+    switch (Opt().time_of_day) {
+        case kTimeMorning:
+            midday = kSkyMorningMidday;
+            sunset = kSkyMorningSunset;
+            break;
+        case kTimeAfternoon:
+            midday = kSkyAfternoonMidday;
+            sunset = kSkyAfternoonSunset;
+            break;
+        case kTimeNight:
+            midday = sunset = kSkyNight;
+            break;
+        case kTimeDay:
+        default:
+            midday = kSkyDayMidday;
+            sunset = kSkyDaySunset;
+            break;
+    }
     std::memcpy(kernel::HostPtr(kSkyMidday), midday, sizeof(kSkyNight));
     std::memcpy(kernel::HostPtr(kSkySunset), sunset, sizeof(kSkyNight));
-    kernel::G<uint8_t>(kHorizonHaze) = Opt().night_mode ? 0 : 1;
+    kernel::G<uint8_t>(kHorizonHaze) = Opt().time_of_day == kTimeNight ? 0 : 1;
 
     // ---- headlight: colour preset x brightness, and beam geometry scaled by options ----
     // Format 0xAARRGGBB. Index 0 matches the old night-mode default (0x48FFF4D8) exactly.
-    // Order matches menu.cpp's kHeadlightColorNames[] (16 entries):
-    //   "WARM WHITE", "PURE WHITE", "COOL WHITE", "BLUE",
-    //   "YELLOW", "PURPLE", "ORANGE", "RED",
-    //   "GOLD", "GREEN", "CYAN", "PINK",
-    //   "LIME", "TEAL", "MAGENTA", "MINT"
+    // Order matches menu.cpp's kHeadlightColorNames[] (16 entries).
     static const uint32_t kHeadlightPresets[] = {
-        0x48FFF4D8,  // 0  WARM WHITE  (default, cream)
-        0x48FFFFFF,  // 1  PURE WHITE
-        0x48E0F0FF,  // 2  COOL WHITE  (blue-tinted white)
-        0x484060FF,  // 3  BLUE        (true medium blue)
-        0x48FFFF80,  // 4  YELLOW
-        0x48C040FF,  // 5  PURPLE      (violet)
-        0x48FFC080,  // 6  ORANGE
-        0x48FF4040,  // 7  RED
-        0x48FFB020,  // 8  GOLD        (deep amber, JDM)
-        0x4840FF40,  // 9  GREEN       (pure green)
-        0x4830E0FF,  // 10 CYAN        (bright aqua, distinct from BLUE)
-        0x48FF80D0,  // 11 PINK        (soft pastel pink)
-        0x48B0FF30,  // 12 LIME        (acid lime green)
-        0x4830D0A0,  // 13 TEAL        (green-blue, distinct from GREEN/BLUE)
-        0x48FF00B4,  // 14 MAGENTA     (hot magenta, distinct from PINK/PURPLE)
-        0x4890FFD0,  // 15 MINT        (pale mint green)
+        0x48FFF4D8, 0x48FFFFFF, 0x48E0F0FF, 0x484060FF,
+        0x48FFFF80, 0x48C040FF, 0x48FFC080, 0x48FF4040,
+        0x48FFB020, 0x4840FF40, 0x4830E0FF, 0x48FF80D0,
+        0x48B0FF30, 0x4830D0A0, 0x48FF00B4, 0x4890FFD0,
     };
     constexpr uint32_t kHeadlightPresetCount =
         sizeof(kHeadlightPresets) / sizeof(kHeadlightPresets[0]);
 
-    // Beam width: scales front (base[2]) and rear (base[4]) widths.
-    // Beam distance: scales the half-length (base[1], base[3]) -> forward reach.
-    // Beam height: scales the center (base[0]) -> moves the whole beam further from the car.
-    // All three: 50% to 600%, matching menu.cpp's kHeadlightPercentages[].
     const uint32_t width_pct = std::clamp<uint32_t>(Opt().headlight_width, 25u, 600u);
     const uint32_t distance_pct = std::clamp<uint32_t>(Opt().headlight_distance, 25u, 600u);
     const uint32_t height_pct = std::clamp<uint32_t>(Opt().headlight_height, 25u, 600u);
@@ -146,7 +149,7 @@ void ApplyGraphicsSwitches() {
 
     static const float kBeamDay[5] = {13.0f, 10.0f, 4.9f, 10.0f, 4.9f};
     static const float kBeamNight[5] = {10.0f, 6.0f, 5.2f, 6.0f, 2.4f};
-    const float* base_beam = Opt().night_mode ? kBeamNight : kBeamDay;
+    const float* base_beam = NightMode() ? kBeamNight : kBeamDay;
     const float beam[5] = {
         base_beam[0] * height_scale,     // center distance
         base_beam[1] * distance_scale,   // half-length (front)
@@ -164,10 +167,9 @@ void ApplyGraphicsSwitches() {
     kernel::G<float>(0x469AFC) = beam[4];
     kernel::G<float>(0x469B00) = beam[4];
 
-    // Colour & brightness: night mode only (daytime beam stays 0x80cccccc so daylight shading is unchanged).
-    // Brightness multiplies alpha; RGB untouched so colour stays true at any brightness.
+    // Colour & brightness: night only (daytime beam stays 0x80cccccc so daylight shading is unchanged).
     uint32_t beam_color = 0x80cccccc;
-    if (Opt().night_mode) {
+    if (NightMode()) {
         const uint32_t preset = kHeadlightPresets[Opt().headlight_color % kHeadlightPresetCount];
         const uint32_t brightness_pct = std::clamp<uint32_t>(Opt().headlight_brightness, 25u, 600u);
         uint32_t alpha = (preset >> 24) & 0xFFu;
@@ -176,7 +178,7 @@ void ApplyGraphicsSwitches() {
     }
     kernel::W32(kHeadlightBeamColor, beam_color);
 
-    bool night = Opt().night_mode;
+    bool night = NightMode();
     if (!night && g_prev_night_mode) g_headlights_clear_frames = 120;
     g_prev_night_mode = night;
     if (g_headlights_clear_frames > 0) --g_headlights_clear_frames;
@@ -396,41 +398,45 @@ X86_FUNC(sub_000CC530) {
     ctx.esp += 4;
 }
 
-// Falling rain: FULL draws every call, HALF every 2nd, QUARTER every 4th, OFF not at all.
-// RAIN CONTINUOUSLY (rain_continuous) forces FULL whenever the game draws rain — no choppy gaps.
 X86_EXTERN_FUNC(__imp__sub_002527A0);
 X86_FUNC(sub_002527A0) {
-    const auto& o = game::Opt();
-    if (o.rain >= 3) {  // OFF
-        ctx.esp += 4;
-        return;
-    }
-    if (!o.rain_continuous) {
-        static uint32_t frame = 0;
-        const uint32_t every = 1u << o.rain;
-        if (frame++ % every != 0) {
-            ctx.esp += 4;
-            return;
-        }
-    }
-    __imp__sub_002527A0(ctx, base);
+    if (game::Opt().rain) return __imp__sub_002527A0(ctx, base);
+    ctx.esp += 4;
 }
 
 X86_EXTERN_FUNC(__imp__sub_000C1BD0);
 X86_FUNC(sub_000C1BD0) {
-    if (game::Opt().yellow_tint && !game::Opt().night_mode) return __imp__sub_000C1BD0(ctx, base);
+    if (game::Opt().yellow_tint && !game::NightMode()) return __imp__sub_000C1BD0(ctx, base);
     uint32_t tint = ctx.ecx + 0xA0;
     float& r = kernel::G<float>(tint);
     float& g = kernel::G<float>(tint + 4);
     float& b = kernel::G<float>(tint + 8);
     float saved[] = {r, g, b};
     float luma = 0.299f * saved[0] + 0.587f * saved[1] + 0.114f * saved[2];
-    if (game::Opt().night_mode) {
-        r = 0.15f * luma;
-        g = 0.32f * luma;
-        b = 0.68f * luma;
-    } else {
-        r = g = b = luma;
+    switch (game::Opt().time_of_day) {
+        case game::kTimeMorning:
+            // a soft warm tint, still easy on the eyes
+            r = 1.05f * luma;
+            g = 1.00f * luma;
+            b = 0.90f * luma;
+            break;
+        case game::kTimeAfternoon:
+            // a golden hour, warmer and a little darker in the blue
+            r = 1.18f * luma;
+            g = 0.92f * luma;
+            b = 0.68f * luma;
+            break;
+        case game::kTimeNight:
+            // a cool, dark blue
+            r = 0.15f * luma;
+            g = 0.32f * luma;
+            b = 0.68f * luma;
+            break;
+        case game::kTimeDay:
+        default:
+            // the original neutral tone
+            r = g = b = luma;
+            break;
     }
     __imp__sub_000C1BD0(ctx, base);
     r = saved[0], g = saved[1], b = saved[2];
@@ -438,7 +444,7 @@ X86_FUNC(sub_000C1BD0) {
 
 X86_EXTERN_FUNC(__imp__sub_000CDA40);
 X86_FUNC(sub_000CDA40) {
-    if (!game::Opt().night_mode) return __imp__sub_000CDA40(ctx, base);
+    if (!game::NightMode()) return __imp__sub_000CDA40(ctx, base);
     uint32_t obj = ctx.ecx;
     float& bloom = kernel::G<float>(obj + 0x170);
     float saved_bloom = bloom;
@@ -449,7 +455,7 @@ X86_FUNC(sub_000CDA40) {
 
 X86_EXTERN_FUNC(__imp__sub_000D5AB0);
 X86_FUNC(sub_000D5AB0) {
-    if (game::Opt().night_mode) {
+    if (game::NightMode()) {
         ctx.esp += 4;
         return;
     }
@@ -458,7 +464,7 @@ X86_FUNC(sub_000D5AB0) {
 
 X86_EXTERN_FUNC(__imp__sub_000D5CA0);
 X86_FUNC(sub_000D5CA0) {
-    if (game::Opt().night_mode) {
+    if (game::NightMode()) {
         ctx.esp += 4;
         return;
     }
@@ -469,7 +475,7 @@ X86_EXTERN_FUNC(__imp__sub_0024AB90);
 X86_FUNC(sub_0024AB90) {
     uint32_t ptr = kernel::R32(ctx.esp + 4);
     if (ptr && mem::IsCommitted(ptr)) {
-        if (game::Opt().night_mode) {
+        if (game::NightMode()) {
             kernel::W32(ptr, kernel::R32(ptr) | 7);
         } else if (game::g_headlights_clear_frames > 0) {
             kernel::W32(ptr, kernel::R32(ptr) & ~7u);
@@ -480,7 +486,7 @@ X86_FUNC(sub_0024AB90) {
 
 X86_EXTERN_FUNC(__imp__sub_0024ABE0);
 X86_FUNC(sub_0024ABE0) {
-    if (game::Opt().night_mode) {
+    if (game::NightMode()) {
         kernel::W32(ctx.esp + 20, 1);
     }
     __imp__sub_0024ABE0(ctx, base);
@@ -489,7 +495,7 @@ X86_FUNC(sub_0024ABE0) {
 X86_EXTERN_FUNC(__imp__sub_00244B70);
 X86_FUNC(sub_00244B70) {
     constexpr uint32_t kSkyColour = 0x42FE00, kSkyLoopReturn = 0x0D7792;
-    if (!game::Opt().night_mode || kernel::R32(ctx.esp) == kSkyLoopReturn) return __imp__sub_00244B70(ctx, base);
+    if (!game::NightMode() || kernel::R32(ctx.esp) == kSkyLoopReturn) return __imp__sub_00244B70(ctx, base);
     static const float kNight[3] = {0.10f, 0.15f, 0.32f};
     float saved[3];
     for (int i = 0; i < 3; i++) {
