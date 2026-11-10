@@ -778,6 +778,9 @@ auto GraphicsFields() {
         o.yellow_tint,
         o.night_mode,
         o.motion_blur,
+        o.headlight_width,
+        o.headlight_brightness,
+        o.headlight_color,
         o.texture_packs,
         o.texture_resolution,
         o.screen_filter
