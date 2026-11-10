@@ -107,6 +107,11 @@ const app::GameInfo app::kGame = {
                 {"night_mode", &game::Opt().night_mode, nullptr},
                 {"music_restored", &game::Opt().music_restored, nullptr},
                 {"motion_blur", &game::Opt().motion_blur, nullptr},
+                // ---- lampu depan: lebar sorot, kecerahan, warna ----
+                {"headlight_width", nullptr, &game::Opt().headlight_width},
+                {"headlight_brightness", nullptr, &game::Opt().headlight_brightness},
+                {"headlight_color", nullptr, &game::Opt().headlight_color},
+                // -------------------------------------------------------
                 {"texture_packs", &game::Opt().texture_packs, nullptr},
                 {"texture_resolution", nullptr, &game::Opt().texture_resolution},
                 {"shader_preload", &game::Opt().shader_preload, nullptr},
