@@ -98,9 +98,6 @@ const char* const kAntiAliasingNames[] = {"OFF", "FXAA", "SSAA 2X"};
 // Options::reflections: how often the cars' reflection is drawn
 constexpr uint32_t kReflectionRates[] = {0, 1, 2, 3};
 const char* const kReflectionRateNames[] = {"FULL", "HALF", "QUARTER", "OFF"};
-// Options::rain: how often falling rain is drawn, same idea as the reflections
-constexpr uint32_t kRainRates[] = {0, 1, 2, 3};
-const char* const kRainRateNames[] = {"FULL", "HALF", "QUARTER", "OFF"};
 // Headlight percentages (width / brightness / distance / height): 50 % to 600 %.
 constexpr uint32_t kHeadlightPercentages[] = {50, 75, 100, 125, 150, 175, 200, 250, 300, 400, 500, 600};
 const char* const kHeadlightPercentageNames[] = {
@@ -130,6 +127,9 @@ constexpr uint32_t kAudioOutputs[] = {audio::kOutputAuto, audio::kOutputMono, au
 const char* const kAudioOutputNames[] = {"AUTOMATIC", "MONO", "2.0 STEREO", "5.1 SURROUND"};
 const char* const kLanguageNames[] = {"ENGLISH", "FRENCH", "GERMAN", "ITALIAN", "SPANISH",
                                       "INDONESIAN"};  // as game::kLanguages
+// the time of day, in game::kTimeMorning .. game::kTimeNight order
+constexpr uint32_t kTimeOfDays[] = {game::kTimeMorning, game::kTimeDay, game::kTimeAfternoon, game::kTimeNight};
+const char* const kTimeOfDayNames[] = {"MORNING", "DAY", "AFTERNOON", "NIGHT"};
 constexpr const char* kDonateUrl = "https://sociabuzz.com/racas/tribe";
 constexpr const char* kGithubUrl = "https://github.com/RanggaCasper";
 constexpr const char* kYoutubeUrl = "https://youtube.com/c/@RanggaCasper";
@@ -269,10 +269,11 @@ void Changed() {
 enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kAudioOutput, kLanguage, kGyro,
              kGyroSensitivity, kTouchOpacity, kTouchSize, kTouchEdit, kCheckUpdates, kAspectRatio, kScreenFilter,
              kAntiAliasing, kFpsPosition, kFpsTemps, kStickMode, kBloom, kFog, kDonate, kGithub, kYoutube, kFpsUsage,
-             kReflections, kParticles, kRain, kRainContinuous, kRainDrops, kShadows, kRoadReflections,
+             kReflections, kParticles, kRain, kRainDrops, kShadows, kRoadReflections,
              kHeadlightWidth, kHeadlightBrightness, kHeadlightColor, kHeadlightDistance, kHeadlightHeight,
+             kTimeOfDay,
              kCheatNos, kCheatSpeedbreaker, kCheatCash, kCheatNoPolice, kCheatUnlockAll,
-             kSkipMovies, kYellowTint, kNightMode, kMotionBlur, kShaderPreload, kCheatDragShift, kCheatNoTraffic,
+             kSkipMovies, kYellowTint, kMotionBlur, kShaderPreload, kCheatDragShift, kCheatNoTraffic,
              kTexturePacks, kTextureResolution };
 
 using rows::Kind;
@@ -301,10 +302,9 @@ constexpr Row kGraphicsRows[] = {
     {Kind::Value, kShadows, "SHADOWS"},
     {Kind::Value, kParticles, "PARTICLE EFFECTS"},
     {Kind::Value, kRain, "FALLING RAIN"},
-    {Kind::Value, kRainContinuous, "RAIN CONTINUOUSLY"},
     {Kind::Value, kRainDrops, "SCREEN RAINDROPS"},
     {Kind::Value, kYellowTint, "YELLOW TINT"},
-    {Kind::Value, kNightMode, "NIGHT MODE"},
+    {Kind::Value, kTimeOfDay, "TIME OF DAY"},
     {Kind::Value, kHeadlightWidth, "HEADLIGHT WIDTH"},
     {Kind::Value, kHeadlightBrightness, "HEADLIGHT BRIGHTNESS"},
     {Kind::Value, kHeadlightColor, "HEADLIGHT COLOR"},
@@ -404,10 +404,9 @@ bool* ToggleFlag(Settings& s, int id) {
         case kParticles: return &o.particles;
         case kShadows: return &o.shadows;
         case kRoadReflections: return &o.road_reflections;
-        case kRainContinuous: return &o.rain_continuous;
+        case kRain: return &o.rain;
         case kRainDrops: return &o.rain_drops;
         case kYellowTint: return &o.yellow_tint;
-        case kNightMode: return &o.night_mode;
         case kMotionBlur: return &o.motion_blur;
         case kTexturePacks: return &o.texture_packs;
         case kShaderPreload: return &o.shader_preload;
@@ -476,9 +475,6 @@ bool StepGraphicsRow(int id, int step, Settings& s, char (&text)[64]) {
         case kReflections:
             std::snprintf(text, sizeof(text), "%s", kReflectionRateNames[StepTable(kReflectionRates, o.reflections, step)]);
             return true;
-        case kRain:
-            std::snprintf(text, sizeof(text), "%s", kRainRateNames[StepTable(kRainRates, o.rain, step)]);
-            return true;
         case kTextureResolution:
             std::snprintf(text, sizeof(text), "%s",
                           kTextureResolutionNames[StepTable(kTextureResolutions, o.texture_resolution, step)]);
@@ -505,6 +501,9 @@ bool StepGraphicsRow(int id, int step, Settings& s, char (&text)[64]) {
         case kHeadlightHeight:
             std::snprintf(text, sizeof(text), "%s",
                           kHeadlightPercentageNames[StepTable(kHeadlightPercentages, o.headlight_height, step)]);
+            return true;
+        case kTimeOfDay:
+            std::snprintf(text, sizeof(text), "%s", kTimeOfDayNames[StepTable(kTimeOfDays, o.time_of_day, step)]);
             return true;
         default:
             return false;
