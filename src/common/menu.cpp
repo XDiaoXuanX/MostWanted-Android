@@ -127,9 +127,10 @@ constexpr uint32_t kAudioOutputs[] = {audio::kOutputAuto, audio::kOutputMono, au
 const char* const kAudioOutputNames[] = {"AUTOMATIC", "MONO", "2.0 STEREO", "5.1 SURROUND"};
 const char* const kLanguageNames[] = {"ENGLISH", "FRENCH", "GERMAN", "ITALIAN", "SPANISH",
                                       "INDONESIAN"};  // as game::kLanguages
-// the time of day, in game::kTimeMorning .. game::kTimeNight order
-constexpr uint32_t kTimeOfDays[] = {game::kTimeMorning, game::kTimeDay, game::kTimeAfternoon, game::kTimeNight};
-const char* const kTimeOfDayNames[] = {"MORNING", "DAY", "AFTERNOON", "NIGHT"};
+// the time of day, in game::kTimeMorning .. game::kTimeDawn order
+constexpr uint32_t kTimeOfDays[] = {game::kTimeMorning, game::kTimeDay, game::kTimeAfternoon,
+                                    game::kTimeNight, game::kTimeMidnight, game::kTimeDawn};
+const char* const kTimeOfDayNames[] = {"MORNING", "DAY", "AFTERNOON", "NIGHT", "MIDNIGHT", "DAWN"};
 constexpr const char* kDonateUrl = "https://sociabuzz.com/racas/tribe";
 constexpr const char* kGithubUrl = "https://github.com/RanggaCasper";
 constexpr const char* kYoutubeUrl = "https://youtube.com/c/@RanggaCasper";
@@ -1435,6 +1436,8 @@ void DrawFpsCounter(double fps) {
 }
 
 void DrawUi(double fps) {
+    // the midnight / dawn sky first, so the FPS counter, cinematic HUD, replay HUD and touch controls still draw on top
+    game::DrawSkyElements();
     DrawFpsCounter(fps);
     game::DrawCinematicHud();
     game::DrawReplayHud();
