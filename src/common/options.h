@@ -14,14 +14,11 @@ struct Pad;
 // the game's own settings, in the settings file through app::kGame.options
 namespace game {
 
-// the languages, saved by these codes: English, French, German, Italian, Spanish, Indonesian. Indonesian is the
-// recomp's own text only: the game files have none, so the game itself stays in English
 inline constexpr const char* kLanguages[] = {"int", "fra", "deu", "ita", "esp", "ind"};
 inline bool KnownLanguage(const std::string& code) {
     return std::find(std::begin(kLanguages), std::end(kLanguages), code) != std::end(kLanguages);
 }
 
-// SSAA renders at twice the height, the presenter averages it down
 inline constexpr uint32_t kAaOff = 0, kAaFxaa = 1, kAaSsaa = 2;
 
 struct Options {
@@ -47,13 +44,18 @@ struct Options {
     bool texture_packs = true;
     uint32_t texture_resolution = 0;
     bool motion_blur = true;
-    // headlight (night mode only): width, brightness, colour, distance (forward reach), height (center offset)
+    // headlight (night mode only): width, brightness, colour, distance, height
     uint32_t headlight_width = 100;       // 50-600 %, multiplies the beam quad's width
     uint32_t headlight_brightness = 100;  // 50-600 %, multiplies the beam colour's alpha
     uint32_t headlight_color = 0;         // preset index (0-15), 0 = warm white
     uint32_t headlight_distance = 100;    // 50-600 %, multiplies the beam's length (forward reach)
-    uint32_t headlight_height = 100;      // 50-600 %, multiplies the beam's center distance (raises the far end)
-    // cheats, src/game/game.cpp's ApplyCheats
+    uint32_t headlight_height = 100;      // 50-600 %, multiplies the beam's center distance
+    // traffic headlight glare (non-player vehicles): 0 % = off, > 0 % = on at default brightness
+    uint32_t traffic_headlight_brightness = 100;
+    // player rear-light glare: 0 % = off, > 0 % = on. Note: because mGlareState bits 0–2 are set
+    // together by the game, 0 % disables the player's FRONT glare too.
+    uint32_t player_taillight_brightness = 100;
+    // cheats
     bool cheat_nos = false;
     bool cheat_speedbreaker = false;
     bool cheat_cash = false;
