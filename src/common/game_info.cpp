@@ -12,35 +12,29 @@ namespace game {
 
 namespace {
 
-// port 0 has the touch controls, the keyboard and mouse; the game sees no input while the panel is open
 void Pad(int port, input::Pad& pad) {
     input::SeenPad(pad);
     if (port == 0) pad.connected = true;
     const bool panel = app::MenuOpen();
     if (!panel && port == 0) input::Keyboard(pad);
     const bool consumed = OptionsMenuPad(port, pad);
-    const bool camera = !panel && (CinematicPad(port, pad) | ReplayPad(port, pad));  // both see the pad
+    const bool camera = !panel && (CinematicPad(port, pad) | ReplayPad(port, pad));
     if (panel || consumed || camera)
         pad = input::Pad{.connected = pad.connected};
 }
 
-// no vibration while the keyboard and mouse are in use
 void Rumble(int port, uint16_t& left, uint16_t& right) {
     if (port != 0 || !input::KeyboardActive()) return;
     left = 0;
     right = 0;
 }
 
-// what the options list cannot hold
 void Load(const void* table) {
     const toml::table& t = *static_cast<const toml::table*>(table);
     Options& o = Opt();
-    // Settings from before version 4 stored FULL (0) as the default. Move that old default to QUARTER;
-    // explicit half, quarter and off choices are kept.
     if (t["defaults"].value_or(int64_t(0)) < 4 && t["car_reflections"].value_or(int64_t(2)) == 0)
         o.reflections = 2;
     std::string language = t["language"].value_or(o.language);
-    // a language no longer offered (French, German, Italian, Spanish) goes back to English
     if (KnownLanguage(language) && LanguageAvailable(language)) o.language = language;
     if (const toml::table* keys = t["keys"].as_table())
         for (auto&& [id, value] : *keys)
@@ -50,9 +44,8 @@ void Load(const void* table) {
             if (auto v = value.value<std::string>()) o.pad[std::string(id.str())] = *v;
 }
 
-// after the settings load, before boot
 void Init() {
-    BootLanguage();  // latched before the options can change the setting
+    BootLanguage();
     input::LoadBindings();
     input::LoadPadBindings();
     audio::SetOutputMode(Opt().audio_output);
@@ -107,11 +100,13 @@ const app::GameInfo app::kGame = {
                 {"night_mode", &game::Opt().night_mode, nullptr},
                 {"music_restored", &game::Opt().music_restored, nullptr},
                 {"motion_blur", &game::Opt().motion_blur, nullptr},
-                // ---- headlight: width, brightness, colour ----
+                // ---- headlight: width, brightness, colour, distance, height ----
                 {"headlight_width", nullptr, &game::Opt().headlight_width},
                 {"headlight_brightness", nullptr, &game::Opt().headlight_brightness},
                 {"headlight_color", nullptr, &game::Opt().headlight_color},
-                // ------------------------------------------------
+                {"headlight_distance", nullptr, &game::Opt().headlight_distance},
+                {"headlight_height", nullptr, &game::Opt().headlight_height},
+                // -------------------------------------------------------------------
                 {"texture_packs", &game::Opt().texture_packs, nullptr},
                 {"texture_resolution", nullptr, &game::Opt().texture_resolution},
                 {"shader_preload", &game::Opt().shader_preload, nullptr},
