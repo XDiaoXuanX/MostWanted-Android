@@ -32,12 +32,12 @@ void Rumble(int port, uint16_t& left, uint16_t& right) {
 void Load(const void* table) {
     const toml::table& t = *static_cast<const toml::table*>(table);
     Options& o = Opt();
-    // migrate the old "rain = true/false" boolean to the new FULL/HALF/QUARTER/OFF mode
-    if (auto rain = t["rain"].as_boolean()) o.rain = rain->get() ? 0 : 3;
     if (t["defaults"].value_or(int64_t(0)) < 4 && t["car_reflections"].value_or(int64_t(2)) == 0)
         o.reflections = 2;
     std::string language = t["language"].value_or(o.language);
     if (KnownLanguage(language) && LanguageAvailable(language)) o.language = language;
+    // a settings file from before the time of day kept NIGHT MODE as a switch
+    if (t["night_mode"].value_or(false)) o.time_of_day = kTimeNight;
     if (const toml::table* keys = t["keys"].as_table())
         for (auto&& [id, value] : *keys)
             if (auto v = value.value<std::string>()) o.keys[std::string(id.str())] = *v;
@@ -96,11 +96,10 @@ const app::GameInfo app::kGame = {
                 {"particles", &game::Opt().particles, nullptr},
                 {"shadows", &game::Opt().shadows, nullptr},
                 {"road_reflections", &game::Opt().road_reflections, nullptr},
-                {"rain", nullptr, &game::Opt().rain},
-                {"rain_continuous", &game::Opt().rain_continuous, nullptr},
+                {"rain", &game::Opt().rain, nullptr},
                 {"rain_drops", &game::Opt().rain_drops, nullptr},
                 {"yellow_tint", &game::Opt().yellow_tint, nullptr},
-                {"night_mode", &game::Opt().night_mode, nullptr},
+                {"time_of_day", nullptr, &game::Opt().time_of_day},
                 {"music_restored", &game::Opt().music_restored, nullptr},
                 {"motion_blur", &game::Opt().motion_blur, nullptr},
                 // ---- headlight: width, brightness, colour, distance, height ----
