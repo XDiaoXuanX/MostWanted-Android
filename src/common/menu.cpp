@@ -98,12 +98,12 @@ const char* const kAntiAliasingNames[] = {"OFF", "FXAA", "SSAA 2X"};
 // Options::reflections: how often the cars' reflection is drawn
 constexpr uint32_t kReflectionRates[] = {0, 1, 2, 3};
 const char* const kReflectionRateNames[] = {"FULL", "HALF", "QUARTER", "OFF"};
-
-// Headlight percentages (width / brightness / distance / height / traffic / taillight): 50 % to 600 %.
+// Headlight percentages (width / brightness / distance / height): 50 % to 600 %.
 constexpr uint32_t kHeadlightPercentages[] = {50, 75, 100, 125, 150, 175, 200, 250, 300, 400, 500, 600};
 const char* const kHeadlightPercentageNames[] = {
     "50%", "75%", "100%", "125%", "150%", "175%", "200%", "250%", "300%", "400%", "500%", "600%"
 };
+// 16 colour presets, matching game.cpp's kHeadlightPresets[] order.
 constexpr uint32_t kHeadlightColors[] = {
     0, 1, 2, 3, 4, 5, 6, 7,
     8, 9, 10, 11, 12, 13, 14, 15
@@ -268,7 +268,6 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kAudioOutp
              kAntiAliasing, kFpsPosition, kFpsTemps, kStickMode, kBloom, kFog, kDonate, kGithub, kYoutube, kFpsUsage,
              kReflections, kParticles, kRain, kRainDrops, kShadows, kRoadReflections,
              kHeadlightWidth, kHeadlightBrightness, kHeadlightColor, kHeadlightDistance, kHeadlightHeight,
-             kTrafficHeadlightBrightness, kPlayerTaillightBrightness,
              kCheatNos, kCheatSpeedbreaker, kCheatCash, kCheatNoPolice, kCheatUnlockAll,
              kSkipMovies, kYellowTint, kNightMode, kMotionBlur, kShaderPreload, kCheatDragShift, kCheatNoTraffic,
              kTexturePacks, kTextureResolution };
@@ -307,8 +306,6 @@ constexpr Row kGraphicsRows[] = {
     {Kind::Value, kHeadlightColor, "HEADLIGHT COLOR"},
     {Kind::Value, kHeadlightDistance, "HEADLIGHT DISTANCE"},
     {Kind::Value, kHeadlightHeight, "HEADLIGHT HEIGHT"},
-    {Kind::Value, kTrafficHeadlightBrightness, "TRAFFIC HEADLIGHTS"},
-    {Kind::Value, kPlayerTaillightBrightness, "PLAYER TAILLIGHTS"},
     {Kind::Value, kMotionBlur, "MOTION BLUR"},
     {Kind::Value, kScreenFilter, "SCREEN FILTER"},
     {Kind::Value, kTexturePacks, "TEXTURE PACKS"},
@@ -502,14 +499,6 @@ bool StepGraphicsRow(int id, int step, Settings& s, char (&text)[64]) {
             std::snprintf(text, sizeof(text), "%s",
                           kHeadlightPercentageNames[StepTable(kHeadlightPercentages, o.headlight_height, step)]);
             return true;
-        case kTrafficHeadlightBrightness:
-            std::snprintf(text, sizeof(text), "%s",
-                          kHeadlightPercentageNames[StepTable(kHeadlightPercentages, o.traffic_headlight_brightness, step)]);
-            return true;
-        case kPlayerTaillightBrightness:
-            std::snprintf(text, sizeof(text), "%s",
-                          kHeadlightPercentageNames[StepTable(kHeadlightPercentages, o.player_taillight_brightness, step)]);
-            return true;
         default:
             return false;
     }
@@ -642,8 +631,18 @@ bool g_pad_capture_armed = false;
 std::chrono::steady_clock::time_point g_pad_capture_since;
 constexpr std::chrono::seconds kPadCaptureTimeout{5};
 
-// the panel's tabs: DEBUG shows its own size controls and a few numbers, CHEATS the game's cheats, MY MUSIC the songs
-enum PanelTab { kPanelDebug, kPanelCheats, kPanelMusic };
+// The panel's tabs: the debug tools, the Android Options pages (rows::Page), then My Music.
+enum PanelTab {
+    kPanelDebug = 0,
+    kPanelGraphics,
+    kPanelTouch,
+    kPanelGeneral,
+    kPanelKeyboard,
+    kPanelController,
+    kPanelCredits,
+    kPanelCheats,
+    kPanelMusic,
+};
 PanelTab g_panel_tab = kPanelDebug;  // DEBUG first, the panel resizing itself
 
 // the panel's own size, as percentages of its default em*80 x em*50; kept within the screen when drawn
@@ -840,16 +839,24 @@ void DrawRows(int page) {
     }
 }
 
-// Defaults on the footer: the panel's own size back to its default on the DEBUG tab, the cheats on CHEATS, nothing on
-// MY MUSIC
+// Defaults on the footer: the panel's own size back to its default on DEBUG, the page's defaults on every Android
+// Options page, nothing on MY MUSIC or CREDITS (neither has settings to restore).
 void Defaults() {
     g_capture = -1;
     g_pad_capture = -1;
-    if (g_panel_tab == kPanelDebug) {
-        g_panel_width_percent = 100;
-        g_panel_height_percent = 100;
-    } else if (g_panel_tab == kPanelCheats) {
-        RestoreDefaults(kCheatsPage);
+    switch (g_panel_tab) {
+        case kPanelDebug:
+            g_panel_width_percent = 100;
+            g_panel_height_percent = 100;
+            break;
+        case kPanelGraphics: RestoreDefaults(kSettingsPage); break;
+        case kPanelTouch: RestoreDefaults(kTouchPage); break;
+        case kPanelGeneral: RestoreDefaults(kGeneralPage); break;
+        case kPanelKeyboard: RestoreDefaults(kKeyboardPage); break;
+        case kPanelController: RestoreDefaults(kControllerPage); break;
+        case kPanelCredits: break;  // nothing to reset
+        case kPanelCheats: RestoreDefaults(kCheatsPage); break;
+        case kPanelMusic: break;    // nothing to reset
     }
 }
 
@@ -915,23 +922,49 @@ void DrawDebug(float em) {
     const ImVec2 px = PanelPixelSize(em, g_panel_width_percent, g_panel_height_percent);
     ImGui::Text("Panel: %.0f x %.0f  @ %.0f, %.0f", px.x, px.y, g_panel_pos.x, g_panel_pos.y);
     ImGui::PushStyleColor(ImGuiCol_Text, kDim);
-    ImGui::TextWrapped("DEBUG is the panel's title tab; CHEATS and MY MUSIC switch to the other views.");
+    ImGui::TextWrapped("DEBUG is the panel's title tab; GRAPHICS, TOUCH, GENERAL, KEYBOARD, CONTROLLER, CREDITS, "
+                       "CHEATS and MY MUSIC switch to the other views.");
     ImGui::PopStyleColor();
 }
 
-// the panel's three tabs, one button each, the open one lit
+// The panel's nine tabs (DEBUG, the Android Options pages, MY MUSIC), each auto-sized to its label and wrapped to a
+// new row when the next would overflow the panel's content width. A tab switch cancels any pending bind capture so
+// the state doesn't leak between pages.
 void DrawTitle(float em) {
-    auto tab = [&](const char* label, bool open) {
-        if (open) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-        bool pressed = ImGui::Button(label, ImVec2(em * 10, 0));
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float max_w = ImGui::GetContentRegionAvail().x;
+    float used = 0;
+    auto tab = [&](const char* label, PanelTab which) {
+        float text_w = ImGui::CalcTextSize(label).x + style.FramePadding.x * 2.0f;
+        float w = std::max(text_w, em * 5.5f);
+        // first tab on a row is placed by ImGui; each next one either stays on this row or starts a new one
+        if (used > 0.0f) {
+            if (used + w + style.ItemSpacing.x * 0.5f > max_w) {
+                used = 0.0f;  // new row: no SameLine
+            } else {
+                ImGui::SameLine(0, style.ItemSpacing.x * 0.5f);
+            }
+        }
+        bool open = g_panel_tab == which;
+        if (open) ImGui::PushStyleColor(ImGuiCol_Button, style.Colors[ImGuiCol_ButtonActive]);
+        bool pressed = ImGui::Button(label, ImVec2(w, 0));
         if (open) ImGui::PopStyleColor();
-        return pressed;
+        used += w + style.ItemSpacing.x * 0.5f;
+        if (pressed) {
+            g_panel_tab = which;
+            g_capture = -1;      // a bind in flight on another page is dropped
+            g_pad_capture = -1;
+        }
     };
-    if (tab("DEBUG", g_panel_tab == kPanelDebug)) g_panel_tab = kPanelDebug;
-    ImGui::SameLine();
-    if (tab(Ui("CHEATS").c_str(), g_panel_tab == kPanelCheats)) g_panel_tab = kPanelCheats;
-    ImGui::SameLine();
-    if (tab("MY MUSIC", g_panel_tab == kPanelMusic)) g_panel_tab = kPanelMusic;
+    tab("DEBUG", kPanelDebug);
+    tab(Ui("GRAPHICS").c_str(), kPanelGraphics);
+    tab(Ui("TOUCH").c_str(), kPanelTouch);
+    tab(Ui("GENERAL").c_str(), kPanelGeneral);
+    tab(Ui("KEYBOARD").c_str(), kPanelKeyboard);
+    tab(Ui("CONTROLLER").c_str(), kPanelController);
+    tab(Ui("CREDITS").c_str(), kPanelCredits);
+    tab(Ui("CHEATS").c_str(), kPanelCheats);
+    tab(Ui("MY MUSIC").c_str(), kPanelMusic);
 }
 
 // My Music: what plays and how, then every song in the folder, with a tap to play it, where it may play and its place in the list
@@ -996,8 +1029,10 @@ void DrawFooter(float em) {
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(buttons_pad, 0.0f));
     if (ImGui::Button(Ui("Back", false).c_str(), ImVec2(bw, 0))) ToggleMenu();
     ImGui::SameLine();
-    if (g_panel_tab == kPanelMusic) ImGui::Dummy(ImVec2(bw, 0));
-    else if (ImGui::Button(Ui("Defaults", false).c_str(), ImVec2(bw, 0))) Defaults();
+    if (g_panel_tab == kPanelMusic || g_panel_tab == kPanelCredits)
+        ImGui::Dummy(ImVec2(bw, 0));  // no defaults to restore on these pages
+    else if (ImGui::Button(Ui("Defaults", false).c_str(), ImVec2(bw, 0)))
+        Defaults();
 }
 
 // The rows a finger drags up or down scroll with it, as a phone's lists do: the row it came down on is let go, so the
@@ -1067,9 +1102,17 @@ void DrawPanel() {
         float footer = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeightWithSpacing() + em;
         ImGui::BeginChild("##rows", ImVec2(0, -footer), ImGuiChildFlags_NavFlattened);
         g_hovered_box = -1;
-        if (g_panel_tab == kPanelMusic) DrawMusic(em);
-        else if (g_panel_tab == kPanelDebug) DrawDebug(em);
-        else DrawRows(kCheatsPage);
+        switch (g_panel_tab) {
+            case kPanelDebug: DrawDebug(em); break;
+            case kPanelMusic: DrawMusic(em); break;
+            case kPanelGraphics: DrawRows(kSettingsPage); break;
+            case kPanelTouch: DrawRows(kTouchPage); break;
+            case kPanelGeneral: DrawRows(kGeneralPage); break;
+            case kPanelKeyboard: DrawRows(kKeyboardPage); break;
+            case kPanelController: DrawRows(kControllerPage); break;
+            case kPanelCredits: DrawRows(kCreditsPage); break;
+            case kPanelCheats: DrawRows(kCheatsPage); break;
+        }
         DragScroll();
         ImGui::EndChild();
         DrawFooter(em);
