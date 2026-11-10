@@ -174,20 +174,25 @@ void ApplyGraphicsSwitches() {
         sizeof(kHeadlightPresets) / sizeof(kHeadlightPresets[0]);
 
     // Beam width: scales the front (base[2]) and rear (base[4]) widths only.
-    // Length and centre distance stay put so the quad still meets the bumper.
-    // 50% to 600%, matching menu.cpp's kHeadlightPercentages[].
+    // Beam distance: scales the half-length (base[1], base[3]) -> forward reach.
+    // Beam height: scales the center (base[0]) -> moves the whole beam further from the car, raising its far end.
+    // All three: 50% to 600%, matching menu.cpp's kHeadlightPercentages[].
     const uint32_t width_pct = std::clamp<uint32_t>(Opt().headlight_width, 25u, 600u);
+    const uint32_t distance_pct = std::clamp<uint32_t>(Opt().headlight_distance, 25u, 600u);
+    const uint32_t height_pct = std::clamp<uint32_t>(Opt().headlight_height, 25u, 600u);
     const float width_scale = float(width_pct) / 100.0f;
+    const float distance_scale = float(distance_pct) / 100.0f;
+    const float height_scale = float(height_pct) / 100.0f;
 
     static const float kBeamDay[5] = {13.0f, 10.0f, 4.9f, 10.0f, 4.9f};
     static const float kBeamNight[5] = {10.0f, 6.0f, 5.2f, 6.0f, 2.4f};
     const float* base_beam = Opt().night_mode ? kBeamNight : kBeamDay;
     const float beam[5] = {
-        base_beam[0],
-        base_beam[1],
-        base_beam[2] * width_scale,
-        base_beam[3],
-        base_beam[4] * width_scale,
+        base_beam[0] * height_scale,     // center distance
+        base_beam[1] * distance_scale,   // half-length (front)
+        base_beam[2] * width_scale,      // width ahead
+        base_beam[3] * distance_scale,   // half-length (rear)
+        base_beam[4] * width_scale,      // width at bumper
     };
     kernel::G<float>(0x469ACC) = beam[0];
     kernel::G<float>(0x469AE4) = beam[1];
