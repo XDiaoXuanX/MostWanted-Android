@@ -106,6 +106,9 @@ const app::GameInfo app::kGame = {
                 {"headlight_color", nullptr, &game::Opt().headlight_color},
                 {"headlight_distance", nullptr, &game::Opt().headlight_distance},
                 {"headlight_height", nullptr, &game::Opt().headlight_height},
+                // ---- glare toggles: traffic headlights, player taillights ----
+                {"traffic_headlight_brightness", nullptr, &game::Opt().traffic_headlight_brightness},
+                {"player_taillight_brightness", nullptr, &game::Opt().player_taillight_brightness},
                 // -------------------------------------------------------------------
                 {"texture_packs", &game::Opt().texture_packs, nullptr},
                 {"texture_resolution", nullptr, &game::Opt().texture_resolution},
