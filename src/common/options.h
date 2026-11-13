@@ -59,6 +59,13 @@ struct Options {
     bool cheat_drag_shift = false;    // the gears shift by themselves in drag races, from the next race
     bool skip_movies = false;         // the movies end as they start, src/game/game.cpp
     uint32_t audio_output = 0;  // audio::kOutputAuto, kOutputStereo, kOutputSurround or kOutputMono
+    // the F10 panel's own size and place, kept across sessions: the DEBUG tab's PANEL WIDTH / PANEL HEIGHT and its
+    // drag. The size is a percentage of its default (40 to 300). The place is the panel's top-left corner in
+    // pixels; UINT32_MAX centres it on the next open, and the DEBUG tab's CENTER PANEL sets it back to that
+    uint32_t menu_width_percent = 100;   // 40 to 300
+    uint32_t menu_height_percent = 100;  // 40 to 300
+    uint32_t menu_pos_x = UINT32_MAX;    // UINT32_MAX = centre on next open
+    uint32_t menu_pos_y = UINT32_MAX;
     std::string language = "int";  // one of kLanguages
     std::map<std::string, std::string> keys;  // action id to key names, absent is the default
     std::map<std::string, std::string> pad;   // action id to a controller's input, absent is SDL's mapping
