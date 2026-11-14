@@ -39,6 +39,10 @@ void Load(const void* table) {
     // explicit half, quarter and off choices are kept.
     if (t["defaults"].value_or(int64_t(0)) < 4 && t["car_reflections"].value_or(int64_t(2)) == 0)
         o.reflections = 2;
+    // a settings file from before the time of day kept NIGHT MODE as a switch: a night saved there becomes
+    // the Time of Day's Night when the new setting is absent, so the player's look is kept
+    if (t["night_mode"].value_or(false) && !t.contains("time_of_day"))
+        o.time_of_day = kTimeNight;
     std::string language = t["language"].value_or(o.language);
     // a language no longer offered (French, German, Italian, Spanish) goes back to English
     if (KnownLanguage(language) && LanguageAvailable(language)) o.language = language;
@@ -104,7 +108,14 @@ const app::GameInfo app::kGame = {
                 {"rain", &game::Opt().rain, nullptr},
                 {"rain_drops", &game::Opt().rain_drops, nullptr},
                 {"yellow_tint", &game::Opt().yellow_tint, nullptr},
-                {"night_mode", &game::Opt().night_mode, nullptr},
+                {"time_of_day", nullptr, &game::Opt().time_of_day},
+                {"headlights", nullptr, &game::Opt().headlights},
+                {"headlight_width", nullptr, &game::Opt().headlight_width},
+                {"headlight_brightness", nullptr, &game::Opt().headlight_brightness},
+                {"headlight_color", nullptr, &game::Opt().headlight_color},
+                {"headlight_distance", nullptr, &game::Opt().headlight_distance},
+                {"headlight_height", nullptr, &game::Opt().headlight_height},
+                {"headlight_adaptive", &game::Opt().headlight_adaptive, nullptr},
                 {"music_restored", &game::Opt().music_restored, nullptr},
                 {"motion_blur", &game::Opt().motion_blur, nullptr},
                 {"texture_packs", &game::Opt().texture_packs, nullptr},
