@@ -3777,18 +3777,30 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
     Assembled& a = asm_;
     if (!Assemble(s, prim, start, count, indices, a)) return;
 
-    // the targets, CPU writes to them first
+    if (s.rs[kRsZEnable]) {
+        const float* vm = s.transforms[kTsView].data();
+        float fx = -vm[2], fy = -vm[6], fz = -vm[10];
+        float l = std::sqrt(fx * fx + fy * fy + fz * fz);
+        if (l > 0.9f) {
+            game::g_cam_forward_x.store(fx / l, std::memory_order_relaxed);
+            game::g_cam_forward_y.store(fy / l, std::memory_order_relaxed);
+            game::g_cam_forward_z.store(fz / l, std::memory_order_relaxed);
+            // camera world position: eye = -R^T * t for the row-major view matrix. Read by InTunnel()
+            // (game.cpp): the tunnel's Y-drop from the outside baseline is the signal that hides the wet look
+            game::g_cam_x.store(-(vm[0] * vm[12] + vm[4] * vm[13] + vm[8]  * vm[14]), std::memory_order_relaxed);
+            game::g_cam_y.store(-(vm[1] * vm[12] + vm[5] * vm[13] + vm[9]  * vm[14]), std::memory_order_relaxed);
+            game::g_cam_z.store(-(vm[2] * vm[12] + vm[6] * vm[13] + vm[10] * vm[14]), std::memory_order_relaxed);
+            game::g_cam_valid.store(true, std::memory_order_relaxed);
+        }
+    }
+
     uint32_t rows, sub_h;
     Target* rt = EnsureColor(s.rt, rows, sub_h);
     Target* ds = s.rs[kRsZEnable] || s.rs[kRsStencilEnable] ? EnsureTarget(s.zs, true) : nullptr;
-    // the zeta has a pitch of its own: a depth buffer wider than the target (Most Wanted's is the multisampled 1280x480
-    // under its 640x480 frame) serves its top left corner; one smaller cannot
     if (rt && ds && (rt->w > ds->w || rt->h > ds->h)) {
         LOG_FIRST(16, "vulkan: depth %08X %ux%u dropped for the larger target %08X %ux%u", s.zs.data, ds->w, ds->h, s.rt.data, rt->w, rt->h);
         ds = nullptr;
     }
-    // a target and depth of different scales (an effect sized one with the other): the smaller is made again at the
-    // frame's scale, as it is from then on
     if (rt && ds && std::fabs(float(rt->w) / rt->gw - float(ds->w) / ds->gw) > 0.01f) {
         bool depth_smaller = float(ds->w) / ds->gw < float(rt->w) / rt->gw;
         const Surface& su = depth_smaller ? s.zs : s.rt;
@@ -3802,7 +3814,6 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
         if (rt && ds && (rt->w > ds->w || rt->h > ds->h)) ds = nullptr;
     }
     if (!rt && !ds) return;
-    // a frame's rows: the CPU's pixels are the frame's, its own upload
     if (rt && !sub_h && LatchCpuWrite(*rt)) UploadTarget(*rt, s.rt);
     draw_rt_ = rt;
     draw_ds_ = ds;
@@ -3814,20 +3825,15 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
 
     DrawTextures stages;
     if (!BindStageTextures(s, stages) || !draw_rt_ && !draw_ds_) return;
-    // BLOOM off: the glow, the frame shrunk to 160x120 and blurred, is not added back onto the frame (ONE + ONE)
     if (!game::Opt().bloom && stages.small && draw_rt_ && draw_rt_->gw == guest_w_ && draw_rt_->gh == guest_h_ &&
         SimpleState(s, kMBlendEnable) && SimpleState(s, kMSrcBlend) == kBlendOne && SimpleState(s, kMDestBlend) == kBlendOne)
         return;
-    // SHADOWS off: the trees' and buildings' shadows on the road are the frame's one 2x multiply (DST_COLOR, SRC_COLOR)
     constexpr uint32_t kBlendDstColor = 0x306, kBlendSrcColor = 0x300;
     if (!game::Opt().shadows && draw_rt_ && draw_rt_->gw == guest_w_ && draw_rt_->gh == guest_h_ &&
         SimpleState(s, kMBlendEnable) && SimpleState(s, kMSrcBlend) == kBlendDstColor &&
         SimpleState(s, kMDestBlend) == kBlendSrcColor)
         return;
     PixelKey pk = MakePixelKey(s, stages.info);
-    // FOG off leaves the factor at 1, no fog for the D3D final combiner (C the fog colour). Most Wanted's takes the fog
-    // alpha as an amount towards its constant (A fog alpha, B C0, C r0): at 1 the whole picture was that grey. Its A
-    // becomes zero, the scene alone
     constexpr uint32_t kFinalFog = 3;
     if (!game::Opt().fog && pk.programmable && (pk.final_abcd >> 24 & 0xEF) == kFinalFog &&
         (pk.final_abcd >> 8 & 0xF) != kFinalFog)
@@ -3852,7 +3858,6 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
     if (!pipe) return;
     g_perf.draws++;
 
-    // everything uploaded before the rendering: a full ring flushes
     VkDeviceSize need = 2 * kUboRange + 1024;
     for (uint32_t i = 0; i < a.buffer_count; i++) need += a.buffers[i].bytes + 16;
     need += VkDeviceSize(a.index_count) * 4 + 16;
@@ -3861,7 +3866,7 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
     SurfaceSize(draw_rt_ ? s.rt : s.zs, size.w, size.h);
     DrawConstants c{};
     FillSurfaceConstants(s, size, c);
-    if (game::Opt().fog) FillFogConstants(s, c);  // off: no fog mode, the shaders' fog factor stays 1
+    if (game::Opt().fog) FillFogConstants(s, c);
     FillCombinerConstants(s, c);
     FillTextureConstants(s, stages, c);
     if (sh.fixed_transform) {
@@ -3869,7 +3874,6 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
         FillLightConstants(s, sh.fk, c);
     }
     std::memcpy(c.vattr, s.vattr.data(), sizeof(c.vattr));
-    // the vertex constants as the last draw's: its copy in this frame's ring serves
     const Frame* cf = &CurrentFrame();
     Alloc vc;
     bool same_vsc = g_vsc_counted ? last_vsc_changes_ == g_vsc_changes
@@ -3909,7 +3913,6 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
     for (int i = 0; i < 4; i++) samplers[i] = StageSampler(s, i, stages, clamp);
     VkDescriptorSet set = Set(stages.view, samplers);
 
-    // the rendering
     BeginRender(draw_rt_ ? &draw_rt_->img : nullptr, draw_ds_ ? &draw_ds_->img : nullptr);
     if (draw_rt_) draw_rt_->drawn = true, draw_rt_->writes++;
     if (draw_ds_) draw_ds_->drawn = true;
@@ -3918,7 +3921,6 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
     Target& bt = draw_rt_ ? *draw_rt_ : *draw_ds_;
     float W = float(bt.w), H = float(bt.h);
     float sc = W / size.w;
-    // a frame's rows (FrameRegion): the surface's picture goes on them, clipped to them
     bool sub = draw_rt_ && sub_h;
     float oy = sub ? rows * sc : 0.0f;
     SetViewport(0, oy, W, sub ? sub_h * sc : H);
