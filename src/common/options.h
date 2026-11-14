@@ -24,87 +24,168 @@ inline bool KnownLanguage(const std::string& code) {
 // SSAA renders at twice the height, the presenter averages it down
 inline constexpr uint32_t kAaOff = 0, kAaFxaa = 1, kAaSsaa = 2;
 
+// time of day: sky colour, sun colour, tint, fog and whether the headlights are on
+inline constexpr uint32_t kTimeMorning = 0, kTimeDay = 1, kTimeAfternoon = 2, kTimeNight = 3,
+                            kTimeMidnight = 4, kTimeDawn = 5, kTimeAuto = 6;
+
+// The concrete time of day actually used for lighting: when the player picks AUTO this follows the real-world
+// clock (Dawn 5-7, Morning 7-10, Day 10-16, Afternoon 16-19, Night 19-22, Midnight otherwise).
+// ApplyGraphicsSwitches() re-resolves it once per frame; everything else reads the cache.
+uint32_t CurrentTimeOfDay();
+
+// headlights: AUTO follows the time of day (Night and Midnight), ON and OFF force them whatever the sky does
+inline constexpr uint32_t kHeadlightsAuto = 0, kHeadlightsOn = 1, kHeadlightsOff = 2;
+
 struct Options {
     bool fps_counter = false;
-    uint32_t fps_position = 0;  // the counter's place, src/common/menu.cpp's kFpsPositionNames
-    bool fps_usage = true;      // the counter's CPU and GPU load
-    bool fps_temps = true;      // the counter's CPU, GPU and battery temperatures
-    uint32_t screen_filter = 0;  // the present's look: 0 none, 1 sharpen, 2 vivid, 3 scanlines, 4 CRT, 5 HDR
-    uint32_t anti_aliasing = 0;  // kAaOff, kAaFxaa or kAaSsaa
-    uint32_t aspect_ratio = 0;  // the frame's shape in hundredths (133 is 4:3), 0 the whole screen; common/aspect.h
-    bool bloom = true;  // the glow added over the frame, native/vulkan.cpp skips it when off
-    bool fog = true;    // the distance fog, native/vulkan.cpp draws without it when off
-    // the cars' reflection, six more views: drawn every frame (0), every 2nd (1), every 4th (2) or off (3, a grey
-    // cube read instead); src/game/game.cpp's ApplyGraphicsSwitches
-    uint32_t reflections = 2;  // mobile default: update the six-face car reflection every fourth frame
-    bool particles = true;    // tyre smoke, sparks and crash debris, the same
-    bool shadows = true;      // the shadows under the cars, the same; the trees' and buildings', native/vulkan.cpp
-    bool road_reflections = true;  // the wet road's reflection, the same
-    bool rain = true;         // the falling rain, src/game/game.cpp
-    bool rain_drops = true;   // the drops on the screen in the rain, the same
-    bool yellow_tint = false;  // the game's yellow colour grading, src/game/game.cpp greys it when off
-    bool night_mode = false;   // night time visual mod: nocturnal grading, headlights, dark sky, src/game/game.cpp
-    bool music_restored = false;  // once: the music switches an earlier build saved at 0 given back, src/game/game.cpp
-    bool shader_preload = false;  // native/vulkan.cpp makes earlier runs' shaders and pipelines at the start
-    bool texture_packs = true;  // the Mods Loader's texture packs drawn over the game's own, src/game/texture_packs.cpp
-    uint32_t texture_resolution = 0;  // the packs' images at most this many texels across, 0 as installed; native/vulkan.cpp
-    bool motion_blur = true;   // the blur by speed and the nitrous' radial blur, src/game/game.cpp skips them when off
-    // cheats, src/game/game.cpp's ApplyCheats
-    bool cheat_nos = false;           // the nitrous never runs out
-    bool cheat_speedbreaker = false;  // the speedbreaker never runs out
-    bool cheat_cash = false;          // the career's cash kept at kCheatCash
-    bool cheat_no_police = false;     // no new cops or pursuits
-    bool cheat_unlock_all = false;    // every car, part and race unlocked
-    bool cheat_no_traffic = false;    // no traffic cars, src/game/game.cpp
-    bool cheat_drag_shift = false;    // the gears shift by themselves in drag races, from the next race
-    bool skip_movies = false;         // the movies end as they start, src/game/game.cpp
-    uint32_t audio_output = 0;  // audio::kOutputAuto, kOutputStereo, kOutputSurround or kOutputMono
-    // the F10 panel's own size and place, kept across sessions: the DEBUG tab's PANEL WIDTH / PANEL HEIGHT and its
-    // drag. The size is a percentage of its default (40 to 300). The place is the panel's top-left corner in
-    // pixels; UINT32_MAX centres it on the next open, and the DEBUG tab's CENTER PANEL sets it back to that
-    uint32_t menu_width_percent = 100;   // 40 to 300
-    uint32_t menu_height_percent = 100;  // 40 to 300
-    uint32_t menu_pos_x = UINT32_MAX;    // UINT32_MAX = centre on next open
-    uint32_t menu_pos_y = UINT32_MAX;
-    std::string language = "int";  // one of kLanguages
-    std::map<std::string, std::string> keys;  // action id to key names, absent is the default
-    std::map<std::string, std::string> pad;   // action id to a controller's input, absent is SDL's mapping
+    uint32_t fps_position = 0;
+    bool fps_usage = true;
+    bool fps_temps = true;
+    uint32_t screen_filter = 0;
+    uint32_t anti_aliasing = 0;
+    uint32_t aspect_ratio = 0;
+    bool bloom = true;
+    bool fog = true;
+    uint32_t reflections = 2;
+    bool particles = true;
+    bool shadows = true;
+    bool road_reflections = true;
+    bool rain = true;
+    bool rain_drops = true;
+    bool yellow_tint = false;
+    uint32_t time_of_day = kTimeDay;
+    uint32_t headlights = kHeadlightsAuto;
+    bool music_restored = false;
+    bool shader_preload = false;
+    bool texture_packs = true;
+    uint32_t texture_resolution = 0;
+    bool motion_blur = true;
+    uint32_t headlight_width = 100;
+    uint32_t headlight_brightness = 100;
+    uint32_t headlight_color = 0;
+    uint32_t headlight_distance = 100;
+    uint32_t headlight_height = 100;
+    bool headlight_adaptive = false;
+    bool cheat_nos = false;
+    bool cheat_speedbreaker = false;
+    bool cheat_cash = false;
+    bool cheat_no_police = false;
+    bool cheat_unlock_all = false;
+    bool cheat_no_traffic = false;
+    bool cheat_drag_shift = false;
+    bool skip_movies = false;
+    uint32_t audio_output = 0;
+    std::string language = "int";
+    std::map<std::string, std::string> keys;
+    std::map<std::string, std::string> pad;
 };
 Options& Opt();
-// the language setting as this run started, the language the game boots in
 const std::string& BootLanguage();
-bool LanguageAvailable(const std::string& code);  // src/game/game.cpp: the LANGUAGE row offers it
-inline std::atomic<uint32_t> g_road_reflection{0};  // the road reflection target's data, virtual; game.cpp, each present
-inline std::atomic<uint32_t> g_env_cube{0};         // the cars' reflection cube's data, the same
-inline std::atomic<bool> g_focus_paused{false};  // the game thread waits while the app is in the background
-inline std::atomic<uint32_t> g_focus_pauses{0};  // focus pauses ended so far
-void WaitWhileUnfocused();  // native/game_host.cpp: game thread, before the present
-void WidenAspect();         // src/game/game.cpp: game thread, at each present
-void ApplyGraphicsSwitches();  // src/game/game.cpp: game thread, at each present
-void ApplyCheats();            // src/game/game.cpp: game thread, at each present
-bool Racing();    // src/game/game.cpp, any thread: the game flow is in a race (free roam too), not loading or the front end
-inline std::atomic<bool> g_reset_car{false};  // native/touch.cpp's RESET, taken by ResetCarFrame
-void ResetCarFrame(X86Context& ctx);          // src/game/game.cpp: game thread, at each present
-void DragShiftFrame(X86Context& ctx);   // src/game/game.cpp: game thread, at each present
-void MusicFrame(X86Context& ctx);                 // src/game/game.cpp: game thread, at each present
-void ModCarsFrame(X86Context& ctx);     // src/game/car_mods.cpp: game thread, at each present
-uint32_t ModCarTexture(X86Context& ctx, uint32_t hash);  // src/game/car_mods.cpp: an add-on's name texture, or 0
-void TexturePacksFrame(X86Context& ctx);  // src/game/texture_packs.cpp: game thread, at each present
-// cinematic mode (src/game/cinematic.cpp): the pause menu's icon asks for it, the next frame enters
-void CinematicRequest(bool from_pause_menu = false);  // from the menu: leaving opens the pause menu again
+bool LanguageAvailable(const std::string& code);
+inline bool NightMode() {
+    uint32_t tod = CurrentTimeOfDay();
+    return tod == kTimeNight || tod == kTimeMidnight;
+}
+inline bool SunUp() {
+    uint32_t tod = CurrentTimeOfDay();
+    return tod == kTimeDawn || tod == kTimeMorning || tod == kTimeDay || tod == kTimeAfternoon;
+}
+inline bool HeadlightsOn() {
+    switch (Opt().headlights) {
+        case kHeadlightsOn:  return true;
+        case kHeadlightsOff: return false;
+        case kHeadlightsAuto:
+        default:             return NightMode();
+    }
+}
+
+// ---- rain ----
+// 0 dry .. 255 fully wet. While Opt().rain is on in a race, rises in half a second; after it stops — or the
+// player leaves the race, opens a replay or a cutscene — decays over three seconds.
+inline std::atomic<uint8_t> g_rain_wetness{0};
+// true while the camera is inside a tunnel: rain and every wet look are hidden inside, so the road does not
+// glisten under a ceiling. RainWetness() returns 0 while it is set, but g_rain_wetness keeps tracking the
+// real rain underneath, so leaving the tunnel shows the wet road again instantly.
+inline std::atomic<bool> g_in_tunnel{false};
+inline uint8_t RainWetness() {
+    if (g_in_tunnel.load(std::memory_order_relaxed)) return 0;
+    return g_rain_wetness.load(std::memory_order_relaxed);
+}
+
+// Opt().rain, racing, no cinematic or replay, and not inside a tunnel: whether rain is being fed right now.
+bool Raining();
+
+// Advances RainWetness toward the rain's own state (ignoring the tunnel), so g_rain_wetness is already 255
+// when the player leaves a tunnel. Called once a frame from ApplyGraphicsSwitches, first thing.
+void UpdateRainWetness();
+
+inline void TimeOfDayLight(float& r, float& g, float& b) {
+    switch (CurrentTimeOfDay()) {
+        case kTimeMorning:   r = 1.02f; g = 1.01f; b = 0.96f; break;
+        case kTimeAfternoon: r = 1.20f; g = 0.90f; b = 0.68f; break;
+        case kTimeNight:     r = 0.42f; g = 0.52f; b = 0.72f; break;
+        case kTimeMidnight:  r = 0.20f; g = 0.28f; b = 0.48f; break;
+        case kTimeDawn:      r = 0.98f; g = 0.84f; b = 0.90f; break;
+        case kTimeDay:
+        default:             r = g = b = 1.0f; break;
+    }
+}
+
+inline void TimeOfDayAmbient(float& r, float& g, float& b) {
+    switch (CurrentTimeOfDay()) {
+        case kTimeMorning:   r = 1.04f; g = 1.02f; b = 0.98f; break;
+        case kTimeAfternoon: r = 1.12f; g = 0.94f; b = 0.82f; break;
+        case kTimeNight:     r = 0.38f; g = 0.48f; b = 0.70f; break;
+        case kTimeMidnight:  r = 0.20f; g = 0.26f; b = 0.45f; break;
+        case kTimeDawn:      r = 1.00f; g = 0.88f; b = 0.92f; break;
+        case kTimeDay:
+        default:             r = g = b = 1.0f; break;
+    }
+}
+
+// the camera's forward direction and world position, written by the renderer each draw; read by the sky overlay
+inline std::atomic<float> g_cam_forward_x{0.0f};
+inline std::atomic<float> g_cam_forward_y{0.0f};
+inline std::atomic<float> g_cam_forward_z{1.0f};
+inline std::atomic<float> g_cam_x{0.0f};
+inline std::atomic<float> g_cam_y{0.0f};
+inline std::atomic<float> g_cam_z{0.0f};
+inline std::atomic<bool>  g_cam_valid{false};
+
+// the sky overlay: the sun and its corona through Dawn/Morning/Day/Afternoon; stars, the moon, shooting stars at
+// Midnight (dimmed stars at Dawn); the rain's screen droplets, streaks and cool wet haze whenever RainWetness()
+// is above a few. Called from app::DrawUi.
+void DrawSkyElements();
+
+inline std::atomic<uint32_t> g_road_reflection{0};
+inline std::atomic<uint32_t> g_env_cube{0};
+inline std::atomic<bool> g_focus_paused{false};
+inline std::atomic<uint32_t> g_focus_pauses{0};
+void WaitWhileUnfocused();
+void WidenAspect();
+void ApplyGraphicsSwitches();
+void ApplyCheats();
+bool Racing();
+inline std::atomic<bool> g_reset_car{false};
+void ResetCarFrame(X86Context& ctx);
+void DragShiftFrame(X86Context& ctx);
+void MusicFrame(X86Context& ctx);
+void ModCarsFrame(X86Context& ctx);
+uint32_t ModCarTexture(X86Context& ctx, uint32_t hash);
+void TexturePacksFrame(X86Context& ctx);
+void CinematicRequest(bool from_pause_menu = false);
 bool CinematicActive();
-bool CinematicClean();  // on, its menu hidden or its path playing: the picture alone, the touch controls out of it
-bool CinematicPad(int port, const input::Pad& pad);  // the pad filter: true while the camera has the pad
-void DrawCinematicHud();                             // inside the ImGui frame: its menu, Start shows and hides it
-bool CinematicMenuHit(float x, float y);             // screen pixels on its menu: the touch controls leave them
-// the replay (src/game/replay.cpp): the race recorded as it runs, played again from the pause menu's icon or the results
-void ReplayRequest(bool from_pause_menu = false);  // from the menu: leaving opens the pause menu again
+bool CinematicClean();
+bool CinematicPad(int port, const input::Pad& pad);
+void DrawCinematicHud();
+bool CinematicMenuHit(float x, float y);
+void ReplayRequest(bool from_pause_menu = false);
 bool ReplayActive();
-void ReplayFrame(X86Context& ctx);  // game thread, the frame's start (cinematic.cpp's hook): records, or plays
-bool ReplayPad(int port, const input::Pad& pad);  // the pad filter: true while the replay has the pad
-void DrawReplayHud();                             // inside the ImGui frame: its menu and timeline
-bool ReplayMenuHit(float x, float y);             // screen pixels on its menu, or the results' REPLAY
-bool ReplayStreaming();  // the replay itself sets the streamed place (replay.cpp's 0x235CD0 hook)
-void ReplayRaceRestarted();  // ERestartRace ran (replay.cpp's 0x1A6DE0 hook): the recording starts over
+void ReplayFrame(X86Context& ctx);
+bool ReplayPad(int port, const input::Pad& pad);
+void DrawReplayHud();
+bool ReplayMenuHit(float x, float y);
+bool ReplayStreaming();
+void ReplayRaceRestarted();
 
 }  // namespace game
