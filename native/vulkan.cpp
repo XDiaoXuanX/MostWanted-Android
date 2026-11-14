@@ -975,10 +975,45 @@ void FillSurfaceConstants(const State& s, GuestExtent size, DrawConstants& c) {
     c.surf[1] = float(size.h);
     c.surf[2] = 1.0f / s.zscale;
     Color(s.rs[kRsFogColor], c.fog_color);
-    if (game::Opt().night_mode) {
-        c.fog_color[0] *= 0.12f;
-        c.fog_color[1] *= 0.16f;
-        c.fog_color[2] *= 0.28f;
+    // time of day: the fog takes the sky's own colour so a night road fades into a night sky, the afternoon into the
+    // golden hour. Day is neutral (the original look)
+    switch (game::CurrentTimeOfDay()) {
+        case game::kTimeMorning:
+            c.fog_color[0] *= 1.05f;
+            c.fog_color[1] *= 1.02f;
+            break;
+        case game::kTimeAfternoon:
+            c.fog_color[0] *= 1.10f;
+            c.fog_color[1] *= 0.92f;
+            c.fog_color[2] *= 0.80f;
+            break;
+        case game::kTimeNight:
+            c.fog_color[0] *= 0.12f;
+            c.fog_color[1] *= 0.16f;
+            c.fog_color[2] *= 0.28f;
+            break;
+        case game::kTimeMidnight:
+            c.fog_color[0] *= 0.04f;
+            c.fog_color[1] *= 0.06f;
+            c.fog_color[2] *= 0.14f;
+            break;
+        case game::kTimeDawn:
+            c.fog_color[0] *= 1.00f;
+            c.fog_color[1] *= 0.78f;
+            c.fog_color[2] *= 0.88f;
+            break;
+        case game::kTimeDay:
+        default:
+            break;
+    }
+    // rain: a cool blue haze in the fog, lingering after the rain stops (RainWetness decays over ~3 s) so the road
+    // reads as wet and cool instead of snapping dry. Applies over every draw; inside a tunnel RainWetness() is 0,
+    // so the wet haze disappears the frame the camera enters
+    if (const uint8_t wet = game::RainWetness()) {
+        const float w = float(wet) / 255.0f;
+        c.fog_color[0] *= 1.00f - 0.20f * w;
+        c.fog_color[1] *= 1.00f - 0.05f * w;
+        c.fog_color[2] *= 1.00f + 0.15f * w;
     }
     c.misc[0] = float(SimpleState(s, kMAlphaRef) & 0xFF);
     c.misc[1] = SimpleState(s, kMAlphaTestEnable) ? float(CmpIndex(SimpleState(s, kMAlphaFunc))) : kAlphaTestAlways;
