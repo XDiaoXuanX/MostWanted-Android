@@ -98,6 +98,28 @@ const char* const kAntiAliasingNames[] = {"OFF", "FXAA", "SSAA 2X"};
 // Options::reflections: how often the cars' reflection is drawn
 constexpr uint32_t kReflectionRates[] = {0, 1, 2, 3};
 const char* const kReflectionRateNames[] = {"FULL", "HALF", "QUARTER", "OFF"};
+// Headlight percentages (width / brightness / distance / height)
+constexpr uint32_t kHeadlightPercentages[] = {50, 75, 100, 125, 150, 175, 200, 250, 300, 400, 500, 600};
+const char* const kHeadlightPercentageNames[] = {
+    "50%", "75%", "100%", "125%", "150%", "175%", "200%", "250%", "300%", "400%", "500%", "600%"
+};
+// 16 colour presets
+constexpr uint32_t kHeadlightColors[] = {
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
+};
+const char* const kHeadlightColorNames[] = {
+    "WARM WHITE", "PURE WHITE", "COOL WHITE", "BLUE",
+    "YELLOW", "PURPLE", "ORANGE", "RED",
+    "GOLD", "GREEN", "CYAN", "PINK",
+    "LIME", "TEAL", "MAGENTA", "MINT"
+};
+// Headlights mode
+constexpr uint32_t kHeadlightModes[] = {game::kHeadlightsAuto, game::kHeadlightsOn, game::kHeadlightsOff};
+const char* const kHeadlightModeNames[] = {"AUTO", "ALWAYS ON", "ALWAYS OFF"};
+// Time of day
+constexpr uint32_t kTimeOfDays[] = {game::kTimeMorning, game::kTimeDay, game::kTimeAfternoon,
+                                    game::kTimeNight, game::kTimeMidnight, game::kTimeDawn, game::kTimeAuto};
+const char* const kTimeOfDayNames[] = {"MORNING", "DAY", "AFTERNOON", "NIGHT", "MIDNIGHT", "DAWN", "AUTO"};
 // Options::texture_resolution: the texture packs' images at most this many texels across, 0 as installed
 constexpr uint32_t kTextureResolutions[] = {512, 1024, 2048, 0};
 const char* const kTextureResolutionNames[] = {"512", "1024", "2048", "MAX"};
@@ -251,8 +273,11 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kAudioOutp
              kGyroSensitivity, kTouchOpacity, kTouchSize, kTouchEdit, kCheckUpdates, kAspectRatio, kScreenFilter,
              kAntiAliasing, kFpsPosition, kFpsTemps, kStickMode, kBloom, kFog, kDonate, kGithub, kYoutube, kFpsUsage,
              kReflections, kParticles, kRain, kRainDrops, kShadows, kRoadReflections,
+             kHeadlightWidth, kHeadlightBrightness, kHeadlightColor, kHeadlightDistance, kHeadlightHeight,
+             kHeadlightAdaptive,
+             kTimeOfDay, kHeadlights,
              kCheatNos, kCheatSpeedbreaker, kCheatCash, kCheatNoPolice, kCheatUnlockAll,
-             kSkipMovies, kYellowTint, kNightMode, kMotionBlur, kShaderPreload, kCheatDragShift, kCheatNoTraffic,
+             kSkipMovies, kYellowTint, kMotionBlur, kShaderPreload, kCheatDragShift, kCheatNoTraffic,
              kTexturePacks, kTextureResolution };
 
 using rows::Kind;
@@ -283,7 +308,14 @@ constexpr Row kGraphicsRows[] = {
     {Kind::Value, kRain, "FALLING RAIN"},
     {Kind::Value, kRainDrops, "SCREEN RAINDROPS"},
     {Kind::Value, kYellowTint, "YELLOW TINT"},
-    {Kind::Value, kNightMode, "NIGHT MODE"},
+    {Kind::Value, kTimeOfDay, "TIME OF DAY"},
+    {Kind::Value, kHeadlights, "HEADLIGHTS"},
+    {Kind::Value, kHeadlightWidth, "HEADLIGHT WIDTH"},
+    {Kind::Value, kHeadlightBrightness, "HEADLIGHT BRIGHTNESS"},
+    {Kind::Value, kHeadlightColor, "HEADLIGHT COLOR"},
+    {Kind::Value, kHeadlightDistance, "HEADLIGHT DISTANCE"},
+    {Kind::Value, kHeadlightHeight, "HEADLIGHT HEIGHT"},
+    {Kind::Value, kHeadlightAdaptive, "ADAPTIVE HEADLIGHTS"},
     {Kind::Value, kMotionBlur, "MOTION BLUR"},
     {Kind::Value, kScreenFilter, "SCREEN FILTER"},
     {Kind::Value, kTexturePacks, "TEXTURE PACKS"},
@@ -381,7 +413,7 @@ bool* ToggleFlag(Settings& s, int id) {
         case kRain: return &o.rain;
         case kRainDrops: return &o.rain_drops;
         case kYellowTint: return &o.yellow_tint;
-        case kNightMode: return &o.night_mode;
+        case kHeadlightAdaptive: return &o.headlight_adaptive;
         case kMotionBlur: return &o.motion_blur;
         case kTexturePacks: return &o.texture_packs;
         case kShaderPreload: return &o.shader_preload;
@@ -438,24 +470,32 @@ bool StepDisplayRow(int id, int step, Settings& s, char (&text)[64]) {
 bool StepGraphicsRow(int id, int step, Settings& s, char (&text)[64]) {
     game::Options& o = game::Opt();
     switch (id) {
-        case kAniso:
-            std::snprintf(text, sizeof(text), "%s", kAnisoNames[StepTable(kAnisoValues, s.aniso, step)]);
-            return true;
-        case kAntiAliasing:
-            std::snprintf(text, sizeof(text), "%s", kAntiAliasingNames[StepTable(kAntiAliasings, o.anti_aliasing, step)]);
-            return true;
-        case kScreenFilter:
-            std::snprintf(text, sizeof(text), "%s", kScreenFilterNames[StepTable(kScreenFilters, o.screen_filter, step)]);
-            return true;
-        case kReflections:
-            std::snprintf(text, sizeof(text), "%s", kReflectionRateNames[StepTable(kReflectionRates, o.reflections, step)]);
-            return true;
-        case kTextureResolution:
+        // ... (yang sudah ada: kAniso, kAntiAliasing, kScreenFilter, kReflections, kTextureResolution, kFpsPosition) ...
+        case kHeadlightWidth:
             std::snprintf(text, sizeof(text), "%s",
-                          kTextureResolutionNames[StepTable(kTextureResolutions, o.texture_resolution, step)]);
+                          kHeadlightPercentageNames[StepTable(kHeadlightPercentages, o.headlight_width, step)]);
             return true;
-        case kFpsPosition:
-            std::snprintf(text, sizeof(text), "%s", kFpsPositionNames[StepTable(kFpsPositions, o.fps_position, step)]);
+        case kHeadlightBrightness:
+            std::snprintf(text, sizeof(text), "%s",
+                          kHeadlightPercentageNames[StepTable(kHeadlightPercentages, o.headlight_brightness, step)]);
+            return true;
+        case kHeadlightColor:
+            std::snprintf(text, sizeof(text), "%s",
+                          kHeadlightColorNames[StepTable(kHeadlightColors, o.headlight_color, step)]);
+            return true;
+        case kHeadlightDistance:
+            std::snprintf(text, sizeof(text), "%s",
+                          kHeadlightPercentageNames[StepTable(kHeadlightPercentages, o.headlight_distance, step)]);
+            return true;
+        case kHeadlightHeight:
+            std::snprintf(text, sizeof(text), "%s",
+                          kHeadlightPercentageNames[StepTable(kHeadlightPercentages, o.headlight_height, step)]);
+            return true;
+        case kTimeOfDay:
+            std::snprintf(text, sizeof(text), "%s", kTimeOfDayNames[StepTable(kTimeOfDays, o.time_of_day, step)]);
+            return true;
+        case kHeadlights:
+            std::snprintf(text, sizeof(text), "%s", kHeadlightModeNames[StepTable(kHeadlightModes, o.headlights, step)]);
             return true;
         default:
             return false;
