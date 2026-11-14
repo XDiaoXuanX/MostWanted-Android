@@ -576,7 +576,7 @@ std::string KeyText(std::string keys) {
 }
 
 // as options_menu.cpp's captions
-const char* const kPages[] = {"GRAPHICS", "TOUCH CONTROLS", "GENERAL", "KEYBOARD", "CONTROLLER", "CREDITS", "CHEATS"};
+constexpr const char* kPages[] = {"GRAPHICS", "TOUCH CONTROLS", "GENERAL", "KEYBOARD", "CONTROLLER", "CREDITS", "CHEATS"};
 constexpr int kSettingsPage = 0;
 constexpr int kTouchPage = 1;
 constexpr int kGeneralPage = 2;
@@ -629,9 +629,38 @@ bool g_pad_capture_armed = false;
 std::chrono::steady_clock::time_point g_pad_capture_since;
 constexpr std::chrono::seconds kPadCaptureTimeout{5};
 
-// the panel's tabs: DEBUG shows the panel's own size and a few numbers, CHEATS the game's cheats, MY MUSIC the songs
-enum PanelTab { kPanelDebug, kPanelCheats, kPanelMusic };
+// The panel's tabs: DEBUG its own size and numbers, MY MUSIC the songs, GRAPHICS / CONTROLS / GENERAL / CHEATS the
+// game options menu's sections (src/game/options_menu.cpp), CINEMATIC and REPLAY its pause menu's two actions
+enum PanelTab { kPanelDebug, kPanelGraphics, kPanelControls, kPanelGeneral,
+                kPanelCheats, kPanelCinematic, kPanelReplay, kPanelMusic };
 PanelTab g_panel_tab = kPanelDebug;  // DEBUG first, the panel resizing itself
+
+// a tab's pages, in the game's options menu's order
+struct PanelSection {
+    const int* pages;
+    int count;
+};
+constexpr int kGraphicsPages[] = {kSettingsPage};
+constexpr int kControlsPages[] = {kTouchPage, kKeyboardPage, kControllerPage};
+constexpr int kGeneralPages[]  = {kGeneralPage, kCreditsPage};
+constexpr int kCheatsPages[]   = {kCheatsPage};
+constexpr PanelSection kPanelSections[] = {
+    {kGraphicsPages, int(std::size(kGraphicsPages))},
+    {kControlsPages, int(std::size(kControlsPages))},
+    {kGeneralPages, int(std::size(kGeneralPages))},
+    {kCheatsPages, int(std::size(kCheatsPages))},
+};
+
+// -1 for DEBUG, CINEMATIC, REPLAY and MY MUSIC, whose contents are not settings pages
+int CurrentSection() {
+    switch (g_panel_tab) {
+        case kPanelGraphics: return 0;
+        case kPanelControls: return 1;
+        case kPanelGeneral:  return 2;
+        case kPanelCheats:   return 3;
+        default:             return -1;
+    }
+}
 
 // the panel's own size, as percentages of its default em*40 x em*16; kept within the screen when drawn
 constexpr uint32_t kPanelSizes[] = {40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 175, 200, 250, 300};
@@ -827,16 +856,38 @@ void DrawRows(int page) {
     }
 }
 
-// Defaults on the footer: the panel's size on the DEBUG tab, the cheats on CHEATS, nothing on MY MUSIC
+// a tab's pages one after the other, as the game's options menu shows a section; a page after the first opens
+// with its name when it has no heading of its own
+void DrawSectionRows(int section) {
+    const PanelSection& s = kPanelSections[section];
+    bool first = true;
+    for (int i = 0; i < s.count; i++) {
+        int page = s.pages[i];
+        size_t count = 0;
+        const Row* list = rows::Page(page, &count);
+        if (!first && count && list[0].kind != Kind::Heading)
+            Section(rows::PageName(page));
+        first = false;
+        DrawRows(page);
+    }
+}
+
+// Defaults on the footer: the panel's size on DEBUG, the active section's pages on the others, nothing on MY MUSIC
+// or the two actions. The touch controls page is left alone, matching the game's options menu's Defaults
 void Defaults() {
     g_capture = -1;
     g_pad_capture = -1;
     if (g_panel_tab == kPanelDebug) {
         g_panel_width_percent = 100;
         g_panel_height_percent = 100;
-    } else if (g_panel_tab == kPanelCheats) {
-        RestoreDefaults(kCheatsPage);
+        return;
     }
+    const int section = CurrentSection();
+    if (section < 0) return;
+    const PanelSection& s = kPanelSections[section];
+    for (int i = 0; i < s.count; i++)
+        if (s.pages[i] != kTouchPage)
+            RestoreDefaults(s.pages[i]);
 }
 
 // a panel size row: the label left, arrows and "NN%" right, stepped through kPanelSizes
@@ -901,23 +952,98 @@ void DrawDebug(float em) {
     const ImVec2 px = PanelPixelSize(em, g_panel_width_percent, g_panel_height_percent);
     ImGui::Text("Panel: %.0f x %.0f  @ %.0f, %.0f", px.x, px.y, g_panel_pos.x, g_panel_pos.y);
     ImGui::PushStyleColor(ImGuiCol_Text, kDim);
-    ImGui::TextWrapped("DEBUG is the panel's title tab; CHEATS and MY MUSIC switch to the other views.");
+    ImGui::TextWrapped("DEBUG is the panel's title tab; the others switch to the settings sections and the other "
+                       "views.");
     ImGui::PopStyleColor();
 }
 
-// the panel's three tabs, one button each, the open one lit
+// CINEMATIC MODE is a pause menu action, not a settings page: start it from here and the panel closes so the
+// camera's own HUD gets the pad back (game_info.cpp's Pad zeroes input while MenuOpen)
+void DrawCinematic(float em) {
+    Section("CINEMATIC MODE");
+    ImGui::PushStyleColor(ImGuiCol_Text, kDim);
+    ImGui::TextWrapped("Free camera with keyframes: move and look freely, add keys along the path, play it back; "
+                       "take a photo or record a video. Same as CINEMATIC MODE in the pause menu's options.");
+    ImGui::PopStyleColor();
+    ImGui::Dummy(ImVec2(0, em * 0.6f));
+    if (game::CinematicActive()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, kHeading);
+        ImGui::TextUnformatted(Ui("CINEMATIC MODE IS ACTIVE").c_str());
+        ImGui::PopStyleColor();
+        ImGui::Dummy(ImVec2(0, em * 0.3f));
+        ImGui::PushStyleColor(ImGuiCol_Text, kDim);
+        ImGui::TextWrapped("Close this panel (Back) to use the camera: its own HUD over the game handles look, "
+                           "height, roll, keyframes, speed, photo and record.");
+        ImGui::PopStyleColor();
+    } else {
+        if (ImGui::Button(Ui("START CINEMATIC MODE").c_str(), ImVec2(em * 18, 0))) {
+            game::CinematicRequest(false);
+            ToggleMenu();
+        }
+        ImGui::Dummy(ImVec2(0, em * 0.3f));
+        ImGui::PushStyleColor(ImGuiCol_Text, kDim);
+        ImGui::TextWrapped("Runs in a race. The panel closes so the camera's own controls take over.");
+        ImGui::PopStyleColor();
+    }
+}
+
+// REPLAY is the other pause menu action: same behaviour here
+void DrawReplay(float em) {
+    Section("REPLAY");
+    ImGui::PushStyleColor(ImGuiCol_Text, kDim);
+    ImGui::TextWrapped("Watch the race again: play, pause, step, change the camera and speed, and save the clip as "
+                       "a video. Same as REPLAY in the pause menu's options.");
+    ImGui::PopStyleColor();
+    ImGui::Dummy(ImVec2(0, em * 0.6f));
+    if (game::ReplayActive()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, kHeading);
+        ImGui::TextUnformatted(Ui("REPLAY IS ACTIVE").c_str());
+        ImGui::PopStyleColor();
+        ImGui::Dummy(ImVec2(0, em * 0.3f));
+        ImGui::PushStyleColor(ImGuiCol_Text, kDim);
+        ImGui::TextWrapped("Close this panel (Back) to use the replay: its own HUD over the game has play / pause, "
+                           "speed, camera, SAVE VIDEO and B to stop recording.");
+        ImGui::PopStyleColor();
+    } else {
+        if (ImGui::Button(Ui("START REPLAY").c_str(), ImVec2(em * 18, 0))) {
+            game::ReplayRequest(false);
+            ToggleMenu();
+        }
+        ImGui::Dummy(ImVec2(0, em * 0.3f));
+        ImGui::PushStyleColor(ImGuiCol_Text, kDim);
+        ImGui::TextWrapped("Runs in a race. The panel closes so the replay's own controls take over.");
+        ImGui::PopStyleColor();
+    }
+}
+
+// The panel's eight tabs, one button each, the open one lit, two rows of four so they fit the default 40 em
+// PANEL WIDTH. The width is shared out of the content area, so they scale with the panel
 void DrawTitle(float em) {
-    auto tab = [&](const char* label, bool open) {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    constexpr int kColumns = 4;
+    float available = ImGui::GetContentRegionAvail().x;
+    float tab_w = std::max((available - style.ItemSpacing.x * (kColumns - 1)) / kColumns, em * 3.0f);
+    auto tab = [&](const char* label, PanelTab which) {
+        bool open = g_panel_tab == which;
         if (open) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-        bool pressed = ImGui::Button(label, ImVec2(em * 10, 0));
+        bool pressed = ImGui::Button(label, ImVec2(tab_w, 0));
         if (open) ImGui::PopStyleColor();
-        return pressed;
+        if (pressed) g_panel_tab = which;
     };
-    if (tab("DEBUG", g_panel_tab == kPanelDebug)) g_panel_tab = kPanelDebug;
+    tab("DEBUG", kPanelDebug);
     ImGui::SameLine();
-    if (tab(Ui("CHEATS").c_str(), g_panel_tab == kPanelCheats)) g_panel_tab = kPanelCheats;
+    tab("GRAPHICS", kPanelGraphics);
     ImGui::SameLine();
-    if (tab("MY MUSIC", g_panel_tab == kPanelMusic)) g_panel_tab = kPanelMusic;
+    tab("CONTROLS", kPanelControls);
+    ImGui::SameLine();
+    tab("GENERAL", kPanelGeneral);
+    tab("CHEATS", kPanelCheats);
+    ImGui::SameLine();
+    tab("CINEMATIC", kPanelCinematic);
+    ImGui::SameLine();
+    tab("REPLAY", kPanelReplay);
+    ImGui::SameLine();
+    tab("MY MUSIC", kPanelMusic);
 }
 
 // My Music: what plays and how, then every song in the folder, with a tap to play it, where it may play and its place in the list
@@ -982,8 +1108,15 @@ void DrawFooter(float em) {
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(buttons_pad, 0.0f));
     if (ImGui::Button(Ui("Back", false).c_str(), ImVec2(bw, 0))) ToggleMenu();
     ImGui::SameLine();
-    if (g_panel_tab == kPanelMusic) ImGui::Dummy(ImVec2(bw, 0));
-    else if (ImGui::Button(Ui("Defaults", false).c_str(), ImVec2(bw, 0))) Defaults();
+    // nothing to reset on the two actions or MY MUSIC
+    const bool show_defaults = g_panel_tab != kPanelMusic &&
+                               g_panel_tab != kPanelCinematic &&
+                               g_panel_tab != kPanelReplay;
+    if (show_defaults) {
+        if (ImGui::Button(Ui("Defaults", false).c_str(), ImVec2(bw, 0))) Defaults();
+    } else {
+        ImGui::Dummy(ImVec2(bw, 0));
+    }
 }
 
 // The rows a finger drags up or down scroll with it, as a phone's lists do: the row it came down on is let go, so the
@@ -1053,9 +1186,14 @@ void DrawPanel() {
         float footer = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeightWithSpacing() + em;
         ImGui::BeginChild("##rows", ImVec2(0, -footer), ImGuiChildFlags_NavFlattened);
         g_hovered_box = -1;
-        if (g_panel_tab == kPanelMusic) DrawMusic(em);
-        else if (g_panel_tab == kPanelDebug) DrawDebug(em);
-        else DrawRows(kCheatsPage);
+        if (g_panel_tab == kPanelMusic)          DrawMusic(em);
+        else if (g_panel_tab == kPanelDebug)     DrawDebug(em);
+        else if (g_panel_tab == kPanelCinematic) DrawCinematic(em);
+        else if (g_panel_tab == kPanelReplay)    DrawReplay(em);
+        else {
+            const int section = CurrentSection();
+            if (section >= 0) DrawSectionRows(section);
+        }
         DragScroll();
         ImGui::EndChild();
         DrawFooter(em);
