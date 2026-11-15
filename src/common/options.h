@@ -116,7 +116,7 @@ inline uint8_t RainWetness() {
     return g_rain_wetness.load(std::memory_order_relaxed);
 }
 
-// Opt().rain, racing, no cinematic or replay, and not inside a tunnel: whether rain is being fed right now.
+// Forward declaration MUST come before HeavyRain() and Stormy() so both compile cleanly.
 bool Raining();
 
 // NEW — true while the rain is heavy (darker sky, more frequent lightning)
@@ -167,8 +167,7 @@ inline std::atomic<float> g_cam_z{0.0f};
 inline std::atomic<bool>  g_cam_valid{false};
 
 // the sky overlay: the sun and its corona through Dawn/Morning/Day/Afternoon; stars, the moon, shooting stars at
-// Midnight (dimmed stars at Dawn); the rain's screen droplets, streaks and cool wet haze whenever RainWetness()
-// is above a few. Called from app::DrawUi.
+// Midnight; lightning during storms; the rain's screen droplets and haze whenever RainWetness() is above a few
 void DrawSkyElements();
 
 inline std::atomic<uint32_t> g_road_reflection{0};
