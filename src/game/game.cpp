@@ -141,8 +141,10 @@ static bool InTunnel() {
 }
 
 bool Raining() {
+    // Shelter (tunnel, etc.) always stops the rain, whatever the option says
     if (g_in_tunnel.load(std::memory_order_relaxed)) return false;
-    return Opt().rain && Racing() && !CinematicActive() && !ReplayActive();
+    const bool wants = Opt().always_rain || Opt().rain;
+    return wants && Racing() && !CinematicActive() && !ReplayActive();
 }
 
 void UpdateRainWetness() {
@@ -156,9 +158,9 @@ void UpdateRainWetness() {
     const float cur = float(g_rain_wetness.load(std::memory_order_relaxed));
     // The raw wetness follows the actual rain, not the tunnel: in a tunnel the wet look is hidden by RainWetness()
     // returning 0, but g_rain_wetness stays at 255 (if it is raining), so leaving the tunnel shows a wet road again
-    // the same frame, without a 0.5 s rise.
-    const bool raining_now = Opt().rain && Racing() && !CinematicActive() && !ReplayActive();
-    const float target = raining_now ? 255.0f : 0.0f;
+    // the same frame, without a 0.5 s rise. With always_rain on, the ground never dries while racing.
+    const bool wants_rain = (Opt().always_rain || Opt().rain) && Racing() && !CinematicActive() && !ReplayActive();
+    const float target = wants_rain ? 255.0f : 0.0f;
     const float rate = 255.0f / (target > cur ? 0.5f : 3.0f);
     const float next = std::clamp(cur + (target > cur ? rate : -rate) * dt, 0.0f, 255.0f);
     g_rain_wetness.store(uint8_t(next), std::memory_order_relaxed);
@@ -178,7 +180,7 @@ void ApplyGraphicsSwitches() {
     uint32_t every = racing < kRaceWarmup ? 1 : rate < 3 ? 1u << rate : 512;
     bool envmap = frame++ % every == 0;
     kernel::G<uint8_t>(kEnvMapSwitch) = envmap ? 1 : 0;
-    kernel::G<uint8_t>(kParticleDrawSwitch) = Opt().particles ? 1 : 0;
+    kernel::G<uint8_t>(kParticleDrawSwitch) = (Opt().particles || Opt().always_rain) ? 1 : 0;
     kernel::W32(kCarShadowSwitch, Opt().shadows && !ReplayActive() ? 1 : 0);
     kernel::W32(kRoadReflectionSwitch, Opt().road_reflections ? 1 : 0);
     g_road_reflection = TargetData(kernel::R32(kRoadReflectionView + 0x60));
@@ -506,31 +508,132 @@ struct SkyStar {
     float size;
     float brightness;
     float phase;
+    float r, g, b;  // colour: white, blue-white, yellow, orange
 };
 
 const std::vector<SkyStar>& Stars() {
     static const std::vector<SkyStar> list = [] {
         std::vector<SkyStar> v;
-        v.reserve(150);
-        for (int i = 0; i < 150; i++) {
+        v.reserve(360);
+        for (int i = 0; i < 360; i++) {
             uint32_t h1 = uint32_t(i) * 2654435761u;
             uint32_t h2 = uint32_t(i) * 1597334677u;
             uint32_t h3 = uint32_t(i) * 3214567891u;
             uint32_t h4 = uint32_t(i) * 1234567891u;
+            uint32_t h5 = uint32_t(i) * 2246822519u;
             float az = (h1 & 0xFFFF) / 65536.0f * 6.28318530718f;
-            float el = 0.15f + (h2 & 0xFFFF) / 65536.0f * 1.35f;
+            float el = 0.12f + (h2 & 0xFFFF) / 65536.0f * 1.40f;
             SkyStar s;
             s.wx = std::cos(el) * std::sin(az);
             s.wy = std::sin(el);
             s.wz = std::cos(el) * std::cos(az);
-            s.size = 0.7f + ((h3 >> 8) & 0x3F) / 63.0f * 0.8f;
-            s.brightness = 0.4f + ((h3 & 0xFF) / 255.0f) * 0.6f;
+            // Most stars are small; a few are large — like a real sky
+            uint32_t size_tier = (h3 >> 4) & 0x7;
+            s.size = size_tier == 0 ? 1.9f : size_tier < 3 ? 1.4f : 0.8f + (h3 & 0xF) / 15.0f * 0.4f;
+            s.brightness = 0.30f + ((h3 & 0xFF) / 255.0f) * 0.70f;
             s.phase = (h4 & 0xFF) / 255.0f * 6.28318530718f;
+            // Colour distribution: mostly white, a few blue-white, yellow, orange (red giants)
+            uint32_t ct = h5 & 0xFF;
+            if (ct < 180)      s.r = 0.98f, s.g = 0.98f, s.b = 1.00f;
+            else if (ct < 220) s.r = 0.80f, s.g = 0.88f, s.b = 1.00f;
+            else if (ct < 245) s.r = 1.00f, s.g = 0.95f, s.b = 0.80f;
+            else               s.r = 1.00f, s.g = 0.80f, s.b = 0.60f;
             v.push_back(s);
         }
         return v;
     }();
     return list;
+}
+
+// ---- lightning ------------------------------------------------------------
+
+struct Lightning {
+    int frames_active = 0;       // > 0 while a bolt is on screen
+    int frames_until_next = -1;  // -1 = fresh storm; 0 = spawn now; > 0 = countdown
+    float strike_x = 0.5f;       // 0..1 across the screen
+    uint32_t seed = 0;
+};
+inline Lightning g_lightning;
+
+static void UpdateLightning() {
+    const bool storm = Opt().lightning && Stormy() && !CinematicActive() && !ReplayActive();
+    if (!storm) {
+        g_lightning.frames_active = 0;
+        g_lightning.frames_until_next = -1;  // next storm starts fresh
+        return;
+    }
+    if (g_lightning.frames_until_next < 0) g_lightning.frames_until_next = 60;  // 1 s delay on a fresh storm
+    if (g_lightning.frames_active > 0) {
+        g_lightning.frames_active--;
+        return;
+    }
+    if (g_lightning.frames_until_next > 0) {
+        g_lightning.frames_until_next--;
+        return;
+    }
+    // Spawn a bolt: 2-7 s between bolts, tighter during heavy rain
+    uint32_t seed = uint32_t(ImGui::GetFrameCount() * 2654435761u) ^ 0xA5A5A5A5u;
+    int delay = HeavyRain() ? 120 + int(seed % 240) : 240 + int(seed % 300);
+    g_lightning.frames_until_next = delay;
+    g_lightning.strike_x = 0.15f + ((seed >> 8) & 0xFF) / 255.0f * 0.70f;
+    g_lightning.seed = seed;
+    g_lightning.frames_active = 14;  // ~230 ms at 60 fps
+}
+
+// Draw the bolt in the sky only, ending at the horizon/treeline (as if striking a distant tree)
+static void DrawLightning(ImDrawList* dl, float W, float H) {
+    if (g_lightning.frames_active <= 0) return;
+    float t = 1.0f - float(g_lightning.frames_active) / 14.0f;  // 0 -> 1 over the bolt's life
+    float env = t < 0.15f ? t / 0.15f : 1.0f - (t - 0.15f) / 0.85f;
+    uint32_t frame = uint32_t(ImGui::GetFrameCount());
+    float flicker = 0.65f + 0.35f * std::sin(float(frame) * 4.7f + float(g_lightning.seed & 0xFF));
+    float brightness = std::clamp(env * flicker, 0.0f, 1.0f);
+    if (brightness < 0.02f) return;
+    uint32_t a = uint32_t(brightness * 230);
+
+    // Sky flash: bright at the top, fading to transparent mid-screen — never touches the ground
+    dl->AddRectFilledMultiColor(
+        ImVec2(0, 0), ImVec2(W, H * 0.55f),
+        IM_COL32(210, 220, 255, a * 2 / 5), IM_COL32(210, 220, 255, a * 2 / 5),
+        IM_COL32(120, 140, 200, 0),          IM_COL32(120, 140, 200, 0));
+    if (t > 0.30f) return;  // the bolt trunk only shows in the first instants
+
+    // Main trunk from the top of the sky down to the horizon line
+    float strikeX = g_lightning.strike_x * W;
+    float groundY = H * 0.52f + 40.0f + (g_lightning.seed & 0x3F);
+    ImVec2 pts[20];
+    int n = 0;
+    uint32_t s = g_lightning.seed;
+    float x = strikeX, y = 0;
+    pts[n++] = ImVec2(x, y);
+    const int kSegments = 11;
+    for (int i = 1; i <= kSegments; i++) {
+        s = s * 1103515245u + 12345u;
+        float segY = y + (groundY - y) / float(kSegments - i + 1);
+        float segX = x + ((s & 0xFF) / 255.0f - 0.5f) * 46.0f;
+        pts[n++] = ImVec2(segX, segY);
+        x = segX; y = segY;
+    }
+    for (int i = 1; i < n; i++) dl->AddLine(pts[i - 1], pts[i], IM_COL32(140, 170, 255, a / 4), 14.0f);
+    for (int i = 1; i < n; i++) dl->AddLine(pts[i - 1], pts[i], IM_COL32(200, 220, 255, a / 2), 5.0f);
+    for (int i = 1; i < n; i++) dl->AddLine(pts[i - 1], pts[i], IM_COL32(255, 255, 255, a), 2.0f);
+
+    // Three branches fanning out from the trunk
+    for (int b = 0; b < 3; b++) {
+        s = s * 1103515245u + 12345u;
+        int start = 2 + int(s % uint32_t(n - 4));
+        float bx = pts[start].x, by = pts[start].y;
+        float ex = bx + ((s >> 8) & 0xFF) / 255.0f * 120.0f - 60.0f;
+        float ey = by + 40.0f + ((s >> 16) & 0xFF) / 255.0f * 80.0f;
+        for (int i = 1; i <= 5; i++) {
+            float tt = float(i) / 5.0f;
+            s = s * 1103515245u + 12345u;
+            float px = bx + (ex - bx) * tt + ((s & 0x3F) / 63.0f - 0.5f) * 24.0f;
+            float py = by + (ey - by) * tt;
+            dl->AddLine(ImVec2(bx, by), ImVec2(px, py), IM_COL32(200, 215, 255, a / 2), 1.4f);
+            bx = px; by = py;
+        }
+    }
 }
 
 // A shooting star, in world space: the two unit directions the head travels between and the age in frames.
@@ -543,6 +646,8 @@ struct Shooting {
 }  // namespace
 
 void DrawSkyElements() {
+    UpdateLightning();  // tick the bolt timer even before the early returns below
+
     const uint32_t tod = CurrentTimeOfDay();
     const bool midnight = tod == kTimeMidnight;
     const bool dawn     = tod == kTimeDawn;
@@ -597,14 +702,12 @@ void DrawSkyElements() {
         }
     }
 
-    // stars
-    if (midnight || dawn) {
-        const float dim = midnight ? 1.0f : 0.5f;
+    // Stars — midnight only, more numerous, coloured, with twinkle and a faint halo on the big ones
+    if (midnight) {
         for (const SkyStar& star : Stars()) {
-            if (!midnight && star.wy < 0.35f) continue;
             float sx, sy;
             if (!project(star.wx, star.wy, star.wz, sx, sy)) continue;
-            if (sx < -5 || sx > W + 5 || sy < -5 || sy > H + 5) continue;
+            if (sx < -8 || sx > W + 8 || sy < -8 || sy > H + 8) continue;
             float edge = 1.0f;
             const float m = 40.0f;
             if (sx < m) edge *= sx / m;
@@ -612,12 +715,19 @@ void DrawSkyElements() {
             if (sy < m) edge *= sy / m;
             if (sy > H - m) edge *= (H - sy) / m;
             edge = std::clamp(edge, 0.0f, 1.0f);
-            float horizon = std::clamp((star.wy - 0.15f) * 2.5f, 0.0f, 1.0f);
-            float twinkle = 0.85f + 0.15f * std::sin(now * 0.02f + star.phase);
-            float alpha_f = edge * horizon * star.brightness * twinkle * dim;
+            float horizon = std::clamp((star.wy - 0.12f) * 2.5f, 0.0f, 1.0f);
+            float tw = 0.72f + 0.18f * std::sin(now * 0.018f + star.phase)
+                              + 0.10f * std::sin(now * 0.043f + star.phase * 1.7f);
+            float alpha_f = edge * horizon * star.brightness * tw;
             if (alpha_f <= 0.01f) continue;
-            uint32_t a = uint32_t(alpha_f * 220.0f);
-            dl->AddCircleFilled(ImVec2(sx, sy), star.size, IM_COL32(255, 255, 240, a));
+            uint32_t a = uint32_t(alpha_f * 240.0f);
+            dl->AddCircleFilled(ImVec2(sx, sy), star.size,
+                                IM_COL32(uint32_t(star.r * 255), uint32_t(star.g * 255),
+                                         uint32_t(star.b * 255), a), 6);
+            if (star.size > 1.7f && a > 180)
+                dl->AddCircle(ImVec2(sx, sy), star.size * 2.2f,
+                              IM_COL32(uint32_t(star.r * 255), uint32_t(star.g * 255),
+                                       uint32_t(star.b * 255), a / 5), 8, 1.0f);
         }
     }
 
@@ -681,7 +791,7 @@ void DrawSkyElements() {
         }
     }
 
-    // shooting stars — in world space, at midnight only, off-screen segments skipped but the star keeps travelling
+    // shooting stars — world space, midnight only
     if (midnight) {
         static std::vector<Shooting> shooting;
         static uint32_t last_spawn = 0;
@@ -750,41 +860,64 @@ void DrawSkyElements() {
         }
     }
 
-    // rain overlay (RainWetness() already returns 0 inside a tunnel, so this block is skipped inside)
+    // Lightning — drawn before the rain, so rain falls in front of it
+    DrawLightning(dl, W, H);
+
+    // Heavier, more detailed rain: wind-slanted streaks, ground splashes, atmospheric haze, layered vignette
     if (RainWetness() > 4 && Racing() && !CinematicActive() && !ReplayActive()) {
         const float w = float(RainWetness()) / 255.0f;
-        dl->AddRectFilled(ImVec2(0, 0), ImVec2(W, H), IM_COL32(80, 130, 180, uint32_t(16 * w)));
+        const float intensity = std::clamp(float(Opt().rain_intensity) / 100.0f, 0.5f, 2.0f);
+        const uint32_t frame = uint32_t(ImGui::GetFrameCount());
+
+        // Cool blue atmosphere
+        dl->AddRectFilled(ImVec2(0, 0), ImVec2(W, H), IM_COL32(80, 130, 180, uint32_t(22 * w * intensity)));
+        // Layered vignette
         for (int i = 0; i < 6; i++) {
             const float t = float(i) / 6.0f;
             const float inset = (0.02f + t * 0.10f) * std::min(W, H);
             dl->AddRect(ImVec2(inset, inset), ImVec2(W - inset, H - inset),
-                        IM_COL32(40, 80, 130, uint32_t(24 * w * (1.0f - t))), 0.0f, 0, 2.0f);
+                        IM_COL32(40, 80, 130, uint32_t(28 * w * intensity * (1.0f - t))), 0.0f, 0, 2.0f);
         }
-        constexpr int kDrops = 64;
+
+        // ---- rain drops: slanted streaks ----
+        const int kDrops = int(220 * intensity * (0.6f + 0.4f * w));
         const float dropScale = 0.55f + 0.45f * w;
-        const uint32_t frame = uint32_t(ImGui::GetFrameCount());
+        const float windX = 0.12f + 0.08f * std::sin(float(frame) * 0.004f);
         for (int d = 0; d < kDrops; d++) {
             const uint32_t h = uint32_t(d) * 2654435761u;
             const float px = ((h & 0xFFFF) / 65535.0f) * W;
             const float py0 = ((h >> 16) & 0xFFFF) / 65535.0f;
-            const float speed = 0.0004f + ((h >> 8) & 0xFF) / 255.0f * 0.0012f;
+            const float speed = 0.0008f + ((h >> 8) & 0xFF) / 255.0f * 0.0026f;
             const float py = std::fmod(py0 + float(frame) * speed, 1.0f) * H;
-            const float r = (2.0f + float((h >> 4) & 7) * 1.1f) * dropScale;
-            const uint32_t a = uint32_t(40 + 70 * w);
-            dl->AddCircleFilled(ImVec2(px, py), r * 1.4f, IM_COL32(10, 20, 30, a / 2), 8);
-            dl->AddCircleFilled(ImVec2(px, py), r, IM_COL32(200, 220, 240, a), 8);
-            dl->AddCircleFilled(ImVec2(px - r * 0.3f, py - r * 0.3f), r * 0.35f,
-                                IM_COL32(255, 255, 255, a), 6);
+            const float pxx = std::fmod(px + float(frame) * speed * W * windX, W);
+            const float len = (10.0f + float((h >> 4) & 0xF) * 2.2f) * dropScale;
+            const uint32_t a = uint32_t(55 + 95 * w);
+            dl->AddLine(ImVec2(pxx, py), ImVec2(pxx + len * windX, py + len),
+                        IM_COL32(180, 210, 240, a), 1.2f + float((h >> 2) & 3) * 0.4f);
         }
-        if (w > 0.5f) {
-            const uint32_t sa = uint32_t(40 * (w - 0.5f) * 2.0f);
-            for (int s = 0; s < 48; s++) {
+
+        // ---- ground splashes ----
+        if (w > 0.55f) {
+            const int kSplashes = int(70 * (w - 0.5f) * 2.0f * intensity);
+            for (int s = 0; s < kSplashes; s++) {
                 const uint32_t h = uint32_t(s) * 1597334677u;
-                const float px = ((h & 0xFFFF) / 65535.0f) * W;
-                const float py = std::fmod(((h >> 16) & 0xFFFF) / 65535.0f + float(frame) * 0.02f, 1.0f) * H;
-                dl->AddLine(ImVec2(px, py), ImVec2(px - 1.0f, py + 24.0f + float(h & 15)),
-                            IM_COL32(180, 200, 220, sa), 1.0f);
+                const float sx = ((h & 0xFFFF) / 65535.0f) * W;
+                const float phase = std::fmod(((h >> 16) & 0xFFFF) / 65535.0f + float(frame) * 0.055f, 1.0f);
+                const float sy = H * (0.72f + 0.26f * (((h >> 8) & 0xFF) / 255.0f));
+                const float radius = 3.0f + phase * 22.0f * dropScale;
+                const uint32_t sa = uint32_t((1.0f - phase) * (1.0f - phase) * 120 * w * intensity);
+                if (sa == 0) continue;
+                dl->AddCircle(ImVec2(sx, sy), radius, IM_COL32(190, 220, 245, sa), 14, 1.6f);
             }
+        }
+
+        // ---- thin haze at the bottom ----
+        if (w > 0.4f) {
+            const uint32_t ha = uint32_t(35 * (w - 0.4f) * 1.66f);
+            dl->AddRectFilledMultiColor(
+                ImVec2(0, H * 0.78f), ImVec2(W, H),
+                IM_COL32(140, 170, 200, 0), IM_COL32(140, 170, 200, 0),
+                IM_COL32(120, 150, 190, ha), IM_COL32(120, 150, 190, ha));
         }
     }
 }
