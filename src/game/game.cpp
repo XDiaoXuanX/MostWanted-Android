@@ -176,7 +176,10 @@ void ApplyGraphicsSwitches() {
     static uint32_t frame = 0, racing = 0;
     racing = Racing() ? racing + (racing < kRaceWarmup) : 0;
     uint32_t rate = Opt().reflections;
-    if (RainWetness() > 8) rate = 0;
+    // The wet road shows reflections well; the original game overrode the rate to FULL when wet. Suppress that
+    // override when always_rain is on, so the player's CAR REFLECTIONS setting (FULL / HALF / QUARTER / OFF) still
+    // applies instead of being silently overridden to FULL every frame.
+    if (RainWetness() > 8 && !Opt().always_rain) rate = 0;
     uint32_t every = racing < kRaceWarmup ? 1 : rate < 3 ? 1u << rate : 512;
     bool envmap = frame++ % every == 0;
     kernel::G<uint8_t>(kEnvMapSwitch) = envmap ? 1 : 0;
