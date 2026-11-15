@@ -472,13 +472,32 @@ bool StepDisplayRow(int id, int step, Settings& s, char (&text)[64]) {
 }
 
 // the graphics rows that are no ON / OFF, stepped first; false for another row
+// the graphics rows that are no ON / OFF, stepped first; false for another row
 bool StepGraphicsRow(int id, int step, Settings& s, char (&text)[64]) {
     game::Options& o = game::Opt();
     switch (id) {
-        // ... (yang sudah ada: kAniso, kAntiAliasing, kScreenFilter, kReflections, kTextureResolution, kFpsPosition) ...
-        case kHeadlightWidth:
+        case kAniso:
+            std::snprintf(text, sizeof(text), "%s", kAnisoNames[StepTable(kAnisoValues, s.aniso, step)]);
+            return true;
+        case kAntiAliasing:
             std::snprintf(text, sizeof(text), "%s",
-                          kHeadlightPercentageNames[StepTable(kHeadlightPercentages, o.headlight_width, step)]);
+                          kAntiAliasingNames[StepTable(kAntiAliasings, o.anti_aliasing, step)]);
+            return true;
+        case kScreenFilter:
+            std::snprintf(text, sizeof(text), "%s",
+                          kScreenFilterNames[StepTable(kScreenFilters, o.screen_filter, step)]);
+            return true;
+        case kReflections:
+            std::snprintf(text, sizeof(text), "%s",
+                          kReflectionRateNames[StepTable(kReflectionRates, o.reflections, step)]);
+            return true;
+        case kTextureResolution:
+            std::snprintf(text, sizeof(text), "%s",
+                          kTextureResolutionNames[StepTable(kTextureResolutions, o.texture_resolution, step)]);
+            return true;
+        case kFpsPosition:
+            std::snprintf(text, sizeof(text), "%s",
+                          kFpsPositionNames[StepTable(kFpsPositions, o.fps_position, step)]);
             return true;
         case kRainIntensity: {
             int v = std::clamp(int(o.rain_intensity), 50, 200);
@@ -487,6 +506,10 @@ bool StepGraphicsRow(int id, int step, Settings& s, char (&text)[64]) {
             std::snprintf(text, sizeof(text), "%u%%", o.rain_intensity);
             return true;
         }
+        case kHeadlightWidth:
+            std::snprintf(text, sizeof(text), "%s",
+                          kHeadlightPercentageNames[StepTable(kHeadlightPercentages, o.headlight_width, step)]);
+            return true;
         case kHeadlightBrightness:
             std::snprintf(text, sizeof(text), "%s",
                           kHeadlightPercentageNames[StepTable(kHeadlightPercentages, o.headlight_brightness, step)]);
@@ -507,7 +530,8 @@ bool StepGraphicsRow(int id, int step, Settings& s, char (&text)[64]) {
             std::snprintf(text, sizeof(text), "%s", kTimeOfDayNames[StepTable(kTimeOfDays, o.time_of_day, step)]);
             return true;
         case kHeadlights:
-            std::snprintf(text, sizeof(text), "%s", kHeadlightModeNames[StepTable(kHeadlightModes, o.headlights, step)]);
+            std::snprintf(text, sizeof(text), "%s",
+                          kHeadlightModeNames[StepTable(kHeadlightModes, o.headlights, step)]);
             return true;
         default:
             return false;
