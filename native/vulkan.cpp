@@ -1006,14 +1006,16 @@ void FillSurfaceConstants(const State& s, GuestExtent size, DrawConstants& c) {
         default:
             break;
     }
-    // rain: a cool blue haze in the fog, lingering after the rain stops (RainWetness decays over ~3 s) so the road
-    // reads as wet and cool instead of snapping dry. Applies over every draw; inside a tunnel RainWetness() is 0,
-    // so the wet haze disappears the frame the camera enters
+    // rain: a deeper, cooler, more widespread wet look — the fog tint scales with the rain intensity, so every
+    // fog-blended surface (road, asphalt, sidewalks) reads wet, not just the road. Applies over every draw; inside
+    // a tunnel RainWetness() is 0, so the wet haze disappears the frame the camera enters.
     if (const uint8_t wet = game::RainWetness()) {
         const float w = float(wet) / 255.0f;
-        c.fog_color[0] *= 1.00f - 0.20f * w;
-        c.fog_color[1] *= 1.00f - 0.05f * w;
-        c.fog_color[2] *= 1.00f + 0.15f * w;
+        const float intensity = float(game::Opt().rain_intensity) / 100.0f;
+        const float k = w * std::clamp(intensity, 0.5f, 2.0f);
+        c.fog_color[0] *= 1.00f - 0.30f * k;  // R drops deeper
+        c.fog_color[1] *= 1.00f - 0.08f * k;  // G drops a little
+        c.fog_color[2] *= 1.00f + 0.28f * k;  // B rises strongly — wet, cool blue
     }
     c.misc[0] = float(SimpleState(s, kMAlphaRef) & 0xFF);
     c.misc[1] = SimpleState(s, kMAlphaTestEnable) ? float(CmpIndex(SimpleState(s, kMAlphaFunc))) : kAlphaTestAlways;
