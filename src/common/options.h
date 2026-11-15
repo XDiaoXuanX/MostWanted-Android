@@ -116,6 +116,9 @@ inline uint8_t RainWetness() {
     return g_rain_wetness.load(std::memory_order_relaxed);
 }
 
+// Opt().rain, racing, no cinematic or replay, and not inside a tunnel: whether rain is being fed right now.
+bool Raining();
+
 // NEW — true while the rain is heavy (darker sky, more frequent lightning)
 inline bool HeavyRain() {
     return RainWetness() > 160;
@@ -125,9 +128,6 @@ inline bool HeavyRain() {
 inline bool Stormy() {
     return Raining() && RainWetness() > 96;
 }
-
-// Opt().rain, racing, no cinematic or replay, and not inside a tunnel: whether rain is being fed right now.
-bool Raining();
 
 // Advances RainWetness toward the rain's own state (ignoring the tunnel), so g_rain_wetness is already 255
 // when the player leaves a tunnel. Called once a frame from ApplyGraphicsSwitches, first thing.
