@@ -52,6 +52,10 @@ struct Options {
     bool road_reflections = true;
     bool rain = true;
     bool rain_drops = true;
+    // NEW — rain effects
+    bool always_rain = false;       // rain always falls during a race, whatever the weather
+    uint32_t rain_intensity = 100;  // 50-200%: density and heaviness of the rain
+    bool lightning = true;          // lightning flashes in the sky during storms
     bool yellow_tint = false;
     uint32_t time_of_day = kTimeDay;
     uint32_t headlights = kHeadlightsAuto;
@@ -110,6 +114,16 @@ inline std::atomic<bool> g_in_tunnel{false};
 inline uint8_t RainWetness() {
     if (g_in_tunnel.load(std::memory_order_relaxed)) return 0;
     return g_rain_wetness.load(std::memory_order_relaxed);
+}
+
+// NEW — true while the rain is heavy (darker sky, more frequent lightning)
+inline bool HeavyRain() {
+    return RainWetness() > 160;
+}
+
+// NEW — true during a storm: rain is falling and wetness is high enough for lightning
+inline bool Stormy() {
+    return Raining() && RainWetness() > 96;
 }
 
 // Opt().rain, racing, no cinematic or replay, and not inside a tunnel: whether rain is being fed right now.
