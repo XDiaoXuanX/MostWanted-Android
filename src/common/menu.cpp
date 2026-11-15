@@ -278,7 +278,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kAudioOutp
              kTimeOfDay, kHeadlights,
              kCheatNos, kCheatSpeedbreaker, kCheatCash, kCheatNoPolice, kCheatUnlockAll,
              kSkipMovies, kYellowTint, kMotionBlur, kShaderPreload, kCheatDragShift, kCheatNoTraffic,
-             kTexturePacks, kTextureResolution };
+             kTexturePacks, kTextureResolution, kAlwaysRain, kRainIntensity, kLightning };
 
 using rows::Kind;
 using rows::Row;
@@ -307,6 +307,9 @@ constexpr Row kGraphicsRows[] = {
     {Kind::Value, kParticles, "PARTICLE EFFECTS"},
     {Kind::Value, kRain, "FALLING RAIN"},
     {Kind::Value, kRainDrops, "SCREEN RAINDROPS"},
+    {Kind::Value, kAlwaysRain, "ALWAYS RAIN"},
+    {Kind::Value, kRainIntensity, "RAIN INTENSITY"},
+    {Kind::Value, kLightning, "LIGHTNING"},
     {Kind::Value, kYellowTint, "YELLOW TINT"},
     {Kind::Value, kTimeOfDay, "TIME OF DAY"},
     {Kind::Value, kHeadlights, "HEADLIGHTS"},
@@ -412,6 +415,8 @@ bool* ToggleFlag(Settings& s, int id) {
         case kRoadReflections: return &o.road_reflections;
         case kRain: return &o.rain;
         case kRainDrops: return &o.rain_drops;
+        case kAlwaysRain: return &o.always_rain;
+        case kLightning: return &o.lightning;
         case kYellowTint: return &o.yellow_tint;
         case kHeadlightAdaptive: return &o.headlight_adaptive;
         case kMotionBlur: return &o.motion_blur;
@@ -475,6 +480,13 @@ bool StepGraphicsRow(int id, int step, Settings& s, char (&text)[64]) {
             std::snprintf(text, sizeof(text), "%s",
                           kHeadlightPercentageNames[StepTable(kHeadlightPercentages, o.headlight_width, step)]);
             return true;
+        case kRainIntensity: {
+            int v = std::clamp(int(o.rain_intensity), 50, 200);
+            if (step) v = std::clamp(v + step * 25, 50, 200);
+            o.rain_intensity = uint32_t(v);
+            std::snprintf(text, sizeof(text), "%u%%", o.rain_intensity);
+            return true;
+        }
         case kHeadlightBrightness:
             std::snprintf(text, sizeof(text), "%s",
                           kHeadlightPercentageNames[StepTable(kHeadlightPercentages, o.headlight_brightness, step)]);
